@@ -938,6 +938,15 @@ void Engine::prepare (int sampleRate, const Raw& raw)
     D.flush();
 }
 
+void Engine::reserve (int sampleRate, int maxBlock)
+{
+    // the lines' sizes depend on the rate only: prepare's assign then reuses them
+    auto& D = *d;
+    D.fs = std::max (1, sampleRate);
+    D.allocate();
+    D.inter.reserve (2 * (std::size_t) std::max (1, maxBlock));
+}
+
 void Engine::flush() noexcept { d->flush(); }
 
 void Engine::set (const Raw& raw)
@@ -1012,6 +1021,7 @@ public:
     {
         rate = (int) std::lround (sampleRate);
         ready = false;
+        engine.reserve (rate, 8192);
     }
 
     void reset() noexcept override

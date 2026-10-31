@@ -129,3 +129,59 @@ TEST (perf167_new_harmless_channel_does_not_allocate_at_its_first_note)
     if (rt95::allocs.load() != 0)
         std::printf ("  %ld allocations\n", rt95::allocs.load());
 }
+
+// Fruity Reeverb, Stereo Enhancer and Fruity Delay 2 make their buffers in prepare (UI thread): the first block, a
+// delay change and a tempo change down to 60 BPM allocate nothing on the audio thread
+TEST (perf167_reeverb1_stereo_enhancer_delay2_do_not_allocate_on_the_audio_thread)
+{
+    for (const auto kind : { lynx::EffectKind::reeverb1, lynx::EffectKind::stereoEnhancer, lynx::EffectKind::fruityDelay2 })
+    {
+        auto fx = lynx::makeEffect (kind);
+        fx->prepare (44100.0);
+        auto slot = lynx::makeEffectSlot (kind);
+        std::vector<float> l (512, 0.1f), r (512, -0.1f);
+        rt95::allocs = 0;
+        rt95::countAllocs = true;
+        fx->process (l.data(), r.data(), 512, slot.params, 120.0);
+        for (int k = 0; k < 8; ++k) // every control to its maximum, one by one
+        {
+            slot.params[(std::size_t) k] = 1.0f;
+            fx->process (l.data(), r.data(), 512, slot.params, 120.0);
+        }
+        fx->process (l.data(), r.data(), 512, slot.params, 60.0);
+        fx->reset();
+        fx->process (l.data(), r.data(), 512, slot.params, 90.0);
+        rt95::countAllocs = false;
+        CHECK (rt95::allocs.load() == 0);
+        if (rt95::allocs.load() != 0)
+            std::printf ("  effect %d: %ld allocations\n", (int) kind, rt95::allocs.load());
+    }
+}
+
+// Fruity Delay 2 made in prepare and restarted at the first block sounds as one made at the first block (before)
+TEST (perf167_delay2_restart_matches_a_new_engine)
+{
+    lynx::fldelay::Delay2State s;
+    s.v = { 20, 100, 90, 80, 300, -200, 1, 90 };
+    lynx::fldelay::Delay2State other;
+    other.v = lynx::fldelay::delay2Default;
+    lynx::fldelay::Delay2Engine fresh (s, 48000.0, 97.0, 512, true);
+    lynx::fldelay::Delay2Engine reused (other, 48000.0, 120.0, 512, true);
+    reused.reserve (60.0);
+    std::vector<float> junkL (512, 0.3f), junkR (512, 0.2f);
+    reused.process (junkL.data(), junkR.data(), 512); // (it played something before the restart)
+    reused.restart (s, 97.0, true);
+    double diff = 0.0;
+    for (int b = 0; b < 40; ++b)
+    {
+        std::vector<float> l1 (512), r1 (512);
+        for (int i = 0; i < 512; ++i)
+            l1[(std::size_t) i] = std::sin (0.01 * (b * 512 + i)) * (b < 4 ? 1.0f : 0.0f), r1[(std::size_t) i] = -0.5f * l1[(std::size_t) i];
+        auto l2 = l1, r2 = r1;
+        fresh.process (l1.data(), r1.data(), 512);
+        reused.process (l2.data(), r2.data(), 512);
+        for (int i = 0; i < 512; ++i)
+            diff = std::max (diff, (double) std::fabs (l1[(std::size_t) i] - l2[(std::size_t) i]) + std::fabs (r1[(std::size_t) i] - r2[(std::size_t) i]));
+    }
+    CHECK (diff == 0.0);
+}

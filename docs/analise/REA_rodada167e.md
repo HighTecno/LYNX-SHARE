@@ -96,9 +96,18 @@ Contrary Motion blip. No issue number; no reply drafts.
   is safe: Windows refuses the delete, and on Linux/macOS the mapping keeps the data. The budget logic is shared
   with the stretch cache (`core/CacheBudget.h`), test `perf167_cache_budget_prunes_the_least_recently_used`.
 
-## 6. Start-up: the audio device and the main window
+## 6. Start-up: the audio device and the main window — measured, not changed
 
-(see §8 for the numbers)
+- [EXEC] Start-up trace of main's build (`LYNX_LOADTRACE`, empty start, 6 runs, `tmp/perf167/startup-*.log`): splash
+  ready ~340 ms; engine workers ~117 ms; **audio device opened 0.83–1.13 s** (WASAPI); then the start-up sound and
+  its 1050 ms landing; the main window is built in **80–130 ms**; window shown at 2.5–3.0 s.
+- So opening the device while the window is built could save at most the window's build, ~0.1 s, of a 2.5–3.0 s
+  start, and the device open already overlaps the splash. Without the saved input device the open took 825 / 936 /
+  1127 ms against 1116–1131 ms with it: inconclusive (noise of the same size).
+- Not done, on purpose: ASIO drivers and JUCE's WASAPI need the thread that opened them (COM apartment,
+  `CoInitialize`; ASIO calls must come from one thread); the window reads the device's state as it is built
+  (Mixer, audio settings) and the song load touches `deviceManager`. A threaded open would trade ≤ 0.1 s for
+  races in every driver type. The time that matters is the start-up sound's landing (LYNX-own, kept as asked).
 
 ## 7. Heavy project: CPU per block and allocations on the audio thread
 

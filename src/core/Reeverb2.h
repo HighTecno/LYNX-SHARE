@@ -48,6 +48,7 @@ public:
     Engine();
     ~Engine();
     void prepare (int sampleRate, const Raw& raw); // creation, rate, state and FL's flush
+    void reserve (int sampleRate, int maxBlock); // the buffers for that rate, ahead of prepare (UI thread)
     void flush() noexcept;
     void set (const Raw& raw);
     void process (float* left, float* right, int n) noexcept;
