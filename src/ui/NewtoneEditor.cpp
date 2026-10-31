@@ -826,7 +826,7 @@ private:
         }
         if (warpMode())
         {
-            warp = newtonefx::parseWarp (fx->state).value_or (newtonefx::WarpMap {});
+            warp = newtonefx::warpOf (fx->state).value_or (newtonefx::WarpMap {}); // (LYNX's own, or FL's Newtime markers)
             warp.frames = frames();
         }
         else if (auto t = newtonefx::trackOf (fx->state); t && sample != nullptr)
