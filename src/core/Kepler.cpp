@@ -2974,7 +2974,7 @@ private:
     {
         switch (shape)
         {
-            case 0: return sinF (phase * 6.2831854820251465f);
+            case 0: return exo ? ildsp::sinf_ (phase * 6.2831854820251465f) : sinF (phase * 6.2831854820251465f);
             case 1: return 0.5f <= phase ? 1.0f - (phase - 0.5f) * 4.0f : phase * 4.0f - 1.0f;
             case 2: return 0.5f <= phase ? 1.0f : -1.0f;
             case 3: return (phase + phase) - 1.0f;
@@ -3010,7 +3010,7 @@ private:
                 lfo2Bip = 0.5f - ph;
                 break;
             case 3:
-                lfo2Bip = sinF (ph * 6.2831854820251465f) * 0.5f;
+                lfo2Bip = ildsp::sinf_ (ph * 6.2831854820251465f) * 0.5f;
                 break;
             case 4:
                 if (lfo2Wrapped)
