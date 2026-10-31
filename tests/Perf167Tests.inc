@@ -72,3 +72,60 @@ TEST (perf167_stopped_vfx_script_costs_the_audio_thread_nothing)
     CHECK (out.size() == 0);
     CHECK (ms < 60.0); // (well under 1 ms in all now)
 }
+
+TEST (perf167_reeverb2_first_block_and_predelay_changes_do_not_allocate)
+{
+    // the heavy-project profile (renderwav LYNX_ALLOCS=1, FL's demo "Thief"): every Reeverb 2 allocated its delay lines
+    // in its first audio block (prepared lazily there) and a predelay change re-allocates them (FL's FUN_006d1d00)
+    auto fx = lynx::makeReeverb2();
+    fx->prepare (44100.0);
+    lynx::reeverb2::Settings s;
+    lynx::EffectParams params {};
+    lynx::reeverb2::toParams (s, params);
+    std::vector<float> l (512, 0.1f), r (512, -0.1f);
+    rt95::allocs = 0;
+    rt95::countAllocs = true;
+    fx->process (l.data(), r.data(), 512, params, 120.0);
+    for (int pre = 0; pre <= 384; pre += 64) // (the predelay knob from 0 to its maximum, 1 s)
+    {
+        s.p[2] = pre;
+        lynx::reeverb2::toParams (s, params);
+        fx->process (l.data(), r.data(), 512, params, 120.0);
+    }
+    s.tempoPredelay = true; // (tempo-synced: 2 s at 60 BPM)
+    lynx::reeverb2::toParams (s, params);
+    fx->process (l.data(), r.data(), 512, params, 60.0);
+    rt95::countAllocs = false;
+    CHECK (rt95::allocs.load() == 0);
+    if (rt95::allocs.load() != 0)
+        std::printf ("  %ld allocations\n", rt95::allocs.load());
+}
+
+// Harmless: a new channel builds its effects rack on the UI thread (settle), so its first note and block allocate
+// nothing on the audio thread (before: the rack's chorus / delay / reverb were made at the first note)
+TEST (perf167_new_harmless_channel_does_not_allocate_at_its_first_note)
+{
+    lynx::ChannelDef channel;
+    channel.instrument = lynx::InstrumentKind::harmless;
+    auto inst = lynx::makeHarmlessInstrument();
+    inst->prepare (44100.0);
+    channel.modelParams.assign ((std::size_t) lynx::harmlessParamCount, 0.0f);
+    // the rack's chorus, delay and reverb on (all other values 0)
+    channel.modelParams[90] = 1.0f;
+    channel.modelParams[91] = 500.0f;
+    channel.modelParams[92] = 1.0f;
+    channel.modelParams[96] = 1.0f;
+    channel.modelParams[97] = 500.0f;
+    inst->configure (channel, 120.0);
+    inst->settle();
+    std::vector<float> l (512, 0.0f), r (512, 0.0f);
+    rt95::allocs = 0;
+    rt95::countAllocs = true;
+    inst->noteOn (60, 0.8f);
+    for (int b = 0; b < 4; ++b)
+        inst->render (l.data(), r.data(), 512, 1.0f, 1.0f);
+    rt95::countAllocs = false;
+    CHECK (rt95::allocs.load() == 0);
+    if (rt95::allocs.load() != 0)
+        std::printf ("  %ld allocations\n", rt95::allocs.load());
+}

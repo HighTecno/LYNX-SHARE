@@ -259,6 +259,10 @@ vfx.addOutputController('n', 0)
     }
     script::setRealtime (false);
     const auto m2 = script::monitorOf (0x165d0002);
+    // (round 167e: the limit is 250 ms of the Python thread's CPU time, so on a busy machine it may come after the
+    // 400 blocks: waited for, up to the 1 s wall-clock backstop and some)
+    for (int w = 0; w < 300 && m2 != nullptr && m2->status().find ("took too long") == std::string::npos; ++w)
+        std::this_thread::sleep_for (std::chrono::milliseconds (10));
     CHECK (m2 != nullptr && m2->status().find ("took too long") != std::string::npos);
     std::sort (times.begin(), times.end());
     const auto p95 = times[times.size() * 95 / 100];
