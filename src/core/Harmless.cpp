@@ -2305,7 +2305,7 @@ public:
     void allNotesOff() noexcept override { engine.allNotesOff(); }
 
     // a new channel builds its effects rack here (UI thread), not at its first note on the audio thread
-    void settle() override { take(); }
+    void settleNew() override { take(); }
 
     bool idle() const noexcept override { return engine.idle() && engine.rack.quiet(); }
 

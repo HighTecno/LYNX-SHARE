@@ -101,7 +101,7 @@ TEST (perf167_reeverb2_first_block_and_predelay_changes_do_not_allocate)
         std::printf ("  %ld allocations\n", rt95::allocs.load());
 }
 
-// Harmless: a new channel builds its effects rack on the UI thread (settle), so its first note and block allocate
+// Harmless: a new channel builds its effects rack on the UI thread (settleNew), so its first note and block allocate
 // nothing on the audio thread (before: the rack's chorus / delay / reverb were made at the first note)
 TEST (perf167_new_harmless_channel_does_not_allocate_at_its_first_note)
 {
@@ -117,7 +117,7 @@ TEST (perf167_new_harmless_channel_does_not_allocate_at_its_first_note)
     channel.modelParams[96] = 1.0f;
     channel.modelParams[97] = 500.0f;
     inst->configure (channel, 120.0);
-    inst->settle();
+    inst->settleNew();
     std::vector<float> l (512, 0.0f), r (512, 0.0f);
     rt95::allocs = 0;
     rt95::countAllocs = true;
