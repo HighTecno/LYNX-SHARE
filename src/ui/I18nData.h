@@ -32,6 +32,7 @@ struct Table
 namespace lynx::i18n::data
 {
 inline constexpr Table tables[] = {
+<<<<<<< HEAD
     { "de", t_de, 149216, 442108 },
     { "es", t_es, 148152, 450340 },
     { "fr", t_fr, 148754, 455912 },
@@ -46,5 +47,21 @@ inline constexpr Table tables[] = {
     { "tr", t_tr, 145820, 436137 },
     { "zh-Hans", t_zh_Hans, 151265, 411727 },
     { "zh-Hant", t_zh_Hant, 151604, 413381 },
+=======
+    { "de", t_de, 148399, 440045 },
+    { "es", t_es, 147384, 448297 },
+    { "fr", t_fr, 147970, 453839 },
+    { "id", t_id, 136066, 420099 },
+    { "it", t_it, 144382, 443746 },
+    { "ja", t_ja, 158751, 505316 },
+    { "ko", t_ko, 152631, 453406 },
+    { "nl", t_nl, 142039, 434938 },
+    { "pl", t_pl, 148826, 434762 },
+    { "pt-BR", t_pt_BR, 149170, 448528 },
+    { "ru", t_ru, 168391, 573431 },
+    { "tr", t_tr, 145038, 434075 },
+    { "zh-Hans", t_zh_Hans, 150428, 409809 },
+    { "zh-Hant", t_zh_Hant, 150752, 411454 },
+>>>>>>> origin/main
 };
 } // namespace lynx::i18n::data
