@@ -87,9 +87,9 @@ channels), 0x29 / 0x32 (≈ 1 500 / 1 170 channels with 1). Not done this round.
 
 ## Where I stopped
 
-- Done (branch feature/flapp167, pushed as wip/flapp167): §1 main pitch, §2 saved state, §3 created / working time,
+- Done (branch feature/flapp167, pushed as wip/flapp167): §1 main pitch, §2 saved state, §3 created / working time, §5 play truncated notes,
   with tests in tests/Rea167gTests.inc; gap list REA_rodada167g-gaps.md.
-- Windows check done (section above). In progress: build-local with FL Data (tmp/r167g/bl1.log), then land.sh.
+- Windows check done (section above). §5 play truncated notes done. Landed on main as 10f31d28 (1 888 105 checks, 0 failures; Windows build OK).
 - Next: §4 channel events (trace the channel settings form), gap items 8, 10, 13.
 - Rerun: `tmp/r167g/g.sh <out.c> 0 <addr>` (headless decompile on /mnt/e/lynx-work/r167g), `python3
   tmp/r167g/py/flpctx.py "<FL Data>" 0x..` (event contexts), `tmp/r167g/flrender.sh` (FL renders — both locks).
