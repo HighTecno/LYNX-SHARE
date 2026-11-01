@@ -173,3 +173,24 @@ TEST (rea167j_first_channel_with_notes)
     CHECK (lynx::firstChannelWithNotes (s, 0) == -1);
     CHECK (lynx::firstChannelWithNotes (s, 7) == -1);
 }
+
+TEST (rea167j_piano_roll_arrow_keys_are_fl_s)
+{
+    using lynx::noteedit::Arrow;
+    using lynx::noteedit::arrowMove;
+    // Shift+Up/Down = a semitone, Ctrl+Up/Down = an octave (FL EEShiftU / EEShiftU12)
+    CHECK (arrowMove (Arrow::up, false, true, false).handled && arrowMove (Arrow::up, false, true, false).keys == 1);
+    CHECK (arrowMove (Arrow::down, false, true, false).keys == -1);
+    CHECK (arrowMove (Arrow::up, true, false, false).keys == 12);
+    CHECK (arrowMove (Arrow::down, true, false, false).keys == -12);
+    CHECK (arrowMove (Arrow::up, false, false, false).keys == 1); // plain arrows = Shift (LYNX extra)
+    // Shift+Left/Right = one grid step, not a bar
+    CHECK (arrowMove (Arrow::right, false, true, false).gridSteps == 1);
+    CHECK (arrowMove (Arrow::left, false, true, false).gridSteps == -1);
+    CHECK (arrowMove (Arrow::left, false, true, false).keys == 0);
+    // Ctrl+Shift+Left/Right rotates, Ctrl+Left/Right and Alt+arrows are not moves
+    CHECK (! arrowMove (Arrow::right, true, true, false).handled);
+    CHECK (! arrowMove (Arrow::right, true, false, false).handled);
+    CHECK (! arrowMove (Arrow::up, false, false, true).handled);
+    CHECK (! arrowMove (Arrow::up, true, true, false).handled);
+}
