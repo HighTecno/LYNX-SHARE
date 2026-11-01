@@ -3684,24 +3684,32 @@ private:
     void step (int delta)
     {
         const auto& all = list();
-        const auto at = presetcycle::step (current, delta, (int) all.size());
-        if (at >= 0)
-            load (at);
+        const auto count = (int) all.size();
+        // FL's next index; a preset LYNX can't read (e.g. Ogun's oldest state format) is passed over in the same
+        // direction, so the arrows keep going
+        auto at = presetcycle::step (current, delta, count);
+        for (int tries = 0; at >= 0 && tries < count; ++tries)
+        {
+            if (load (at, tries == count - 1))
+                return;
+            at = presetcycle::step (at, delta, count);
+        }
     }
 
-    void load (int index)
+    bool load (int index, bool reportFailure = true)
     {
         const auto& all = list();
         const auto* d = def();
         if (d == nullptr || ! juce::isPositiveAndBelow (index, (int) all.size()))
-            return;
+            return false;
         const auto& preset = all[(std::size_t) index];
         auto changed = natives::withPreset (*d, preset.path, preset.name, flStudioAccess());
         if (! changed)
         {
-            ui::postHint ({ tr ("This preset could not be read: {0}", { juce::String::fromUTF8 (preset.name.c_str()) }), {} }, 2500);
+            if (reportFailure)
+                ui::postHint ({ tr ("This preset could not be read: {0}", { juce::String::fromUTF8 (preset.name.c_str()) }), {} }, 2500);
             current = index; // (the next step goes on from it)
-            return;
+            return false;
         }
         const auto kind = d->instrument;
         engine.editSong ([ch = channel, kind, c = std::move (*changed)] (Song& s) {
@@ -3712,6 +3720,7 @@ private:
         currentName = juce::String::fromUTF8 (preset.name.c_str());
         ui::postHint ({ currentName, juce::String (presetcycle::positionText (index, (int) all.size())) }, 2500);
         repaint();
+        return true;
     }
 
     void showMenu()
