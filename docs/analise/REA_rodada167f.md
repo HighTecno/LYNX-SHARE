@@ -185,6 +185,8 @@ The panel's buttons are named LoudnessCompBtn, FastRecoveryBtn ("INSTANT RECOVER
 
 ## Where I stopped
 
+- 2026-10-31 (4): Emphasis landed (bf594f49), Wave Traveller landed (f29400ea). Transporter in progress (feature/flgap167-tp).
+
 - 2026-10-31 (3): front end mapped (§1.3, fxh.exe = fx.c + vtable hooks); LYNX side written (core/EmphasisFx,
   EffectKind::flEmphasis, editor, 15 languages, tests/Emphasis167fTests.inc with DLL goldens at 44.1/48 kHz); the engine
   port (core/EmphasisEngine, §1.2) in progress by a helper; Transporter and Wave Traveller helpers in their own

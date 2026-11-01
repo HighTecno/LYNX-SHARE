@@ -23,12 +23,12 @@ Uses = occurrences in the installation's `Data` (demo songs in parentheses).
 
 | FL plugin | Uses (demo songs) | In LYNX | Effort | Value |
 |---|---:|---|---|---|
-| **Emphasis** (mastering limiter) | 31 (4 demo songs, all on the Master) | approximate (LYNX limiter) | large: oversampled C++ engine in the DLL, ~10 MB state (round 154 §3) | **high**: the master of 4 demo songs |
+| **Emphasis** (mastering limiter) | 31 (4 demo songs, all on the Master) | **bit-identical since 167f** (was: LYNX limiter) | large: oversampled C++ engine in the DLL, ~10 MB state (round 154 §3) | **high**: the master of 4 demo songs |
 | **Transporter** | 13 (1) | approximate (utility stage) | large: Faust `transientDetectionLooper` in `ildsp_x64.dll`, host song position + side-chain (round 165k §9) | medium |
 | **Fruity Slicer 2** (new in FL 2026) | 7 (0) | none: not imported | large: 5.9 MB front end + 2.7 MB `engine_x64.dll`, per-slice envelopes/maps (`Data/Maps`, `Data/Envelopes`) | low now: the 7 uses are 2 distinct states, the `Default` preset and the `FruitySlicer2Track` template, both without a sample **[DATA]**; nothing to play until users' own projects use it |
 | FL Studio Mobile Rack FX | 36 (0, all presets) | none: slot left out | large: the FL Studio Mobile effect modules | low–medium (presets only) |
 | FL Studio Mobile / Mobile Rack | 10 (0) | none: synth preset by name | very large (FLM instruments + content) | low |
-| Wave Traveller | 13 (1) | approximate: sample plays, scratch curve left out | medium | medium (1 demo song + a render test) |
+| Wave Traveller | 13 (1) | **bit-identical since 167f** (FL's engine, REA_rodada167f-wavetraveller.md; was: sample only) | medium | medium (1 demo song + a render test) |
 | Fruity LSD (MIDI → Windows GS synth) | 6 (0) | none: silent | medium (DLS player) | low (database entries only) |
 | Fruity dB Meter, Fruity Spectroman | 9 (1) | **LYNX role since 167f**: LYNX's analyser (Wave Candy role) in the peak-meter / spectrum view, the slot kept | small | low |
 | Kepler Exo | 192 (presets) | synth fallback | — | 167d |
