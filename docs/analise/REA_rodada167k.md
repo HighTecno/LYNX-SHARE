@@ -227,7 +227,7 @@ render, **[GUI]** LYNX driven on Windows (fresh profile, `LYNX_TEST_MODE=1`), **
 
 ## Where I stopped
 
-- Done (feature/flopt167k): items 1–10 (first landing d2ad4494 = items 1–8), tests green (`tests/Rea167kTests.inc`), Windows GUI re-check (keys 7/8/9,
+- Done and landed: items 1–8 in d2ad4494, items 9–10 in c444cba0; tests green (`tests/Rea167kTests.inc`), Windows GUI re-check (keys 7/8/9,
   marker keys, undo, mixer keys, export dialog) and render checks against FL.
 - Left from the brief: 167h leftovers (Sampler legacy panel, .flp events 0x20 (+0x892),
   0x30 (+0x224), 0x32 (+0x1fc), 0xAA (+0x714 count + strings), 0x2B, 0xE2/0xE6, 0x26: they need the channel form
