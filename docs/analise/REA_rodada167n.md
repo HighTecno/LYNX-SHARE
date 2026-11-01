@@ -76,8 +76,7 @@ markers as there: [DECOMP] disassembly of the installation's `Transporter_x64.dl
   `transporterApprox` (as main did for `emphasisApprox`).
 
 ## Where I stopped
-- Done: wip commit of 167f's helper work, merge of origin/main, §1–§3 with tests.
-- Next: build-local with FL Data, Windows build + GUI check of the editor (fresh LYNX_PROFILE_DIR, LYNX_TEST_MODE=1),
-  land via `flock ~/projetos/lynx/.git/lynx-merge.lock ~/.claude/jobs/f8789b49/tmp/coord/land.sh flgap167-tp`.
-- Rerun: `ZIG_GLOBAL_CACHE_DIR=~/.cache/zig-flgap167tp ZIG_LOCAL_CACHE_DIR=~/.cache/zig-flgap167tp
-  ~/.claude/jobs/f8789b49/tmp/coord/buildslot.sh scripts/build-local.sh "/mnt/c/Program Files/Image-Line/FL Studio 2026/Data"`.
+- LANDED on main as f0cc644e (2026-11-01): build-local with FL Data 1890867 checks / 0 failures, Windows build,
+  self-test OK. Windows editor check done (§4).
+- Left open: the input-track mapping keeps the k-th-input rule (as Limiter / Transmitter; not re-proven for the
+  Transporter by an FL render); FL's host silence handling and v3 states' uninitialised Source / Stereo (167f §6).
