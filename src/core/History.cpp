@@ -67,7 +67,7 @@ bool sameClip (const Clip& a, const Clip& b) noexcept
     return a.pattern == b.pattern && a.track == b.track && a.start == b.start && a.length == b.length && a.offset == b.offset
            && a.kind == b.kind && a.channel == b.channel && a.automation == b.automation && a.fadeIn == b.fadeIn && a.fadeOut == b.fadeOut
            && a.gain == b.gain && a.pan == b.pan && a.muted == b.muted && a.offsetFraction == b.offsetFraction
-           && a.pitch == b.pitch && a.reversed == b.reversed;
+           && a.pitch == b.pitch && a.reversed == b.reversed && a.stretch == b.stretch;
 }
 
 bool sameClips (const std::vector<Clip>& a, const std::vector<Clip>& b) noexcept

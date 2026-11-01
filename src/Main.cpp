@@ -4877,7 +4877,7 @@ private:
                 const auto loaded = juce::Time::getMillisecondCounterHiRes();
                 // .mp3: the Export window's MP3 (320 kbps); everything else as before
                 auto options = settings.toOptions();
-                // --save-tempo: FL's "Tempo information" (acid chunk) on (round 167l: compare with FL's AcidBox render)
+                // --save-tempo: FL's "Tempo information" (acid chunk) on (round 167l: compare with FL's AcidBox render; --export)
                 if (juce::JUCEApplication::getCommandLineParameters().contains ("--save-tempo"))
                     options.saveTempo = true;
                 // --no-warmup: the export's plugin warm-up off (round 155: compare the start of the file)
