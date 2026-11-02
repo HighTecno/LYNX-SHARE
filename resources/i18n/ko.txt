@@ -6307,3 +6307,4 @@ countries: kr
 "Pattern time markers: Add auto" = "패턴 시간 마커: 자동 추가"
 "Pattern time markers: Add time signature change..." = "패턴 시간 마커: 박자표 변경 추가..."
 "Delete all markers" = "모든 마커 삭제"
+"Colour group" = "색상 그룹"

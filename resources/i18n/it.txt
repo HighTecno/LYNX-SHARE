@@ -6307,3 +6307,4 @@ countries: it ch sm
 "Pattern time markers: Add auto" = "Marker temporali del pattern: Aggiungi automatico"
 "Pattern time markers: Add time signature change..." = "Marker temporali del pattern: Aggiungi cambio di tempo in chiave..."
 "Delete all markers" = "Elimina tutti i marker"
+"Colour group" = "Gruppo colore"

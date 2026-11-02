@@ -6307,3 +6307,4 @@ countries: nl be
 "Pattern time markers: Add auto" = "Patroontijdmarkeringen: Automatisch toevoegen"
 "Pattern time markers: Add time signature change..." = "Patroontijdmarkeringen: Maatsoortwijziging toevoegen..."
 "Delete all markers" = "Alle markeringen verwijderen"
+"Colour group" = "Kleurgroep"

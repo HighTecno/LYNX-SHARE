@@ -6307,3 +6307,4 @@ countries: fr be ch ca lu
 "Pattern time markers: Add auto" = "Marqueurs temporels du pattern : Ajout automatique"
 "Pattern time markers: Add time signature change..." = "Marqueurs temporels du pattern : Ajouter un changement de signature rythmique..."
 "Delete all markers" = "Supprimer tous les marqueurs"
+"Colour group" = "Groupe de couleur"

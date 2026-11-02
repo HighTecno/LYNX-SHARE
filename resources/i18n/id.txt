@@ -6307,3 +6307,4 @@ countries: id
 "Pattern time markers: Add auto" = "Penanda waktu pola: Tambah otomatis"
 "Pattern time markers: Add time signature change..." = "Penanda waktu pola: Tambah perubahan tanda birama..."
 "Delete all markers" = "Hapus semua penanda"
+"Colour group" = "Grup warna"

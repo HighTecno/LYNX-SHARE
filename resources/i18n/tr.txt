@@ -6307,3 +6307,4 @@ countries: tr
 "Pattern time markers: Add auto" = "Desen zaman işaretçileri: Otomatik ekle"
 "Pattern time markers: Add time signature change..." = "Desen zaman işaretçileri: Ölçü değişikliği ekle..."
 "Delete all markers" = "Tüm işaretçileri sil"
+"Colour group" = "Renk grubu"

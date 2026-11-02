@@ -6307,3 +6307,4 @@ countries: es mx ar co cl pe ve
 "Pattern time markers: Add auto" = "Marcadores de tiempo del patrón: Añadir automático"
 "Pattern time markers: Add time signature change..." = "Marcadores de tiempo del patrón: Añadir cambio de compás..."
 "Delete all markers" = "Eliminar todos los marcadores"
+"Colour group" = "Grupo de color"

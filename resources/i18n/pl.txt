@@ -6307,3 +6307,4 @@ countries: pl
 "Pattern time markers: Add auto" = "Znaczniki czasu patternu: Dodaj automatycznie"
 "Pattern time markers: Add time signature change..." = "Znaczniki czasu patternu: Dodaj zmianę metrum..."
 "Delete all markers" = "Usuń wszystkie znaczniki"
+"Colour group" = "Grupa kolorów"

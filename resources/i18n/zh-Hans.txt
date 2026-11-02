@@ -6307,3 +6307,4 @@ countries: cn sg
 "Pattern time markers: Add auto" = "模式时间标记：自动添加"
 "Pattern time markers: Add time signature change..." = "模式时间标记：添加拍号变化..."
 "Delete all markers" = "删除所有标记"
+"Colour group" = "颜色组"

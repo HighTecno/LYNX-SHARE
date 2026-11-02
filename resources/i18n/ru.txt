@@ -6307,3 +6307,4 @@ countries: ru by kz
 "Pattern time markers: Add auto" = "Маркеры времени паттерна: Добавить авто"
 "Pattern time markers: Add time signature change..." = "Маркеры времени паттерна: Добавить смену размера..."
 "Delete all markers" = "Удалить все маркеры"
+"Colour group" = "Цветовая группа"

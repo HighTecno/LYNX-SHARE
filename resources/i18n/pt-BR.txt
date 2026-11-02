@@ -6464,3 +6464,4 @@ countries: br
 "Pattern time markers: Add auto" = "Marcadores de tempo do pattern: Adicionar automático"
 "Pattern time markers: Add time signature change..." = "Marcadores de tempo do pattern: Adicionar mudança de fórmula de compasso..."
 "Delete all markers" = "Excluir todos os marcadores"
+"Colour group" = "Grupo de cor"

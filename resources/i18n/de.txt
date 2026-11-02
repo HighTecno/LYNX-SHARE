@@ -6307,3 +6307,4 @@ countries: de at ch li lu
 "Pattern time markers: Add auto" = "Pattern-Zeitmarker: Automatisch hinzufügen"
 "Pattern time markers: Add time signature change..." = "Pattern-Zeitmarker: Taktartwechsel hinzufügen..."
 "Delete all markers" = "Alle Marker löschen"
+"Colour group" = "Farbgruppe"
