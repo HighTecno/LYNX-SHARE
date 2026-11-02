@@ -8,6 +8,7 @@
 
 #include "core/EditorPolish.h"
 #include "core/EventEdit.h"
+#include "core/MarkerPlan.h"
 #include "core/NoteEdit.h"
 #include "core/NoteTools.h"
 #include "engine/MidiFileIo.h"
@@ -1098,6 +1099,24 @@ void PianoRollComponent::paint (juce::Graphics& g)
             textcache::drawText (g, juce::String (b + 1), x + 3, rulerTop + 2, 40, timelineHeight - 4, juce::Justification::centredLeft);
         }
 
+        // the pattern's time markers (round 168g): a flag and the name in the ruler's lower half, like the Playlist's
+        for (const auto& m : currentPattern (song).markers)
+        {
+            const auto x = (float) tickToX ((double) m.tick);
+            if (x < (float) keyboardWidth - 120.0f || x > (float) ruler.getRight())
+                continue;
+            const auto colour = m.isSignature() ? textPrimary : accent;
+            g.setColour (colour);
+            g.fillRect (juce::Rectangle<float> (x, (float) rulerTop + 11.0f, 1.5f, (float) timelineHeight - 11.0f));
+            juce::Path flag;
+            flag.addTriangle (x, (float) rulerTop + 11.0f, x + 6.0f, (float) rulerTop + 14.0f, x, (float) rulerTop + 17.0f);
+            g.fillPath (flag);
+            auto label = juce::String::fromUTF8 (m.name.c_str());
+            if (label.isEmpty() && m.action != 0)
+                label = tr (markers::actionName (m.action));
+            textcache::drawText (g, label, (int) x + 8, rulerTop + 10, 110, timelineHeight - 11, juce::Justification::centredLeft);
+        }
+
         if (playheadTick >= 0.0)
         {
             const auto x = (float) tickToX (playheadTick);
@@ -1475,6 +1494,16 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
             drag = Drag::keyboard;
             previewOn (yToKey (e.y), keyVelocityAt (e.x, yToKey (e.y)));
         }
+        return;
+    }
+
+    // ruler: right-click = the Time markers menu (on a marker: its own items), as FL's
+    if (e.y >= rulerTop && e.y < headerHeight && e.x >= keyboardWidth && e.mods.isPopupMenu())
+    {
+        if (const auto m = markerAtX (e.x); m >= 0)
+            showPatternMarkerMenu (m);
+        else
+            markersMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
         return;
     }
 
@@ -2790,6 +2819,7 @@ void PianoRollComponent::showMoreMenu()
     menu.addSubMenu (tr ("File"), fileMenu());
     menu.addSubMenu (tr ("Edit"), editMenu());
     menu.addSubMenu (tr ("View"), viewMenu());
+    menu.addSubMenu (tr ("Time markers"), markersMenu());
     menu.addSeparator();
     menu.addSectionHeader (tr ("Note operations (selection, or all notes)"));
     menu.addItem (tr ("Chop to grid") + "\tCtrl+U", [this, grid] { runOperation ([grid] (Pattern& p, const std::vector<int>& t) { return noteedit::chop (p, t, grid); }); });
@@ -3388,6 +3418,16 @@ bool PianoRollComponent::runAction (const std::string& id)
     }
     else if (is ("pianoRoll.copyMidiClipboard")) copyToMidiClipboard();
     else if (is ("pianoRoll.pasteMidiClipboard")) pasteFromMidiClipboard();
+    else if (is ("pianoRoll.markerAdd")) editPatternMarker (markerKeyTick(), -1);
+    else if (is ("pianoRoll.markerAuto"))
+    {
+        const auto tick = snap ((double) markerKeyTick(), true);
+        if (std::none_of (currentPattern (engine.getSong()).markers.begin(), currentPattern (engine.getSong()).markers.end(),
+                          [tick] (const Marker& m) { return m.tick == tick; })) // (FL keeps the marker there, no undo step)
+            engine.editSong ([tick] (Song& s) { noteedit::addPatternAutoMarker (currentPattern (s), tick); });
+        repaint();
+    }
+    else if (is ("pianoRoll.markerSignature")) addPatternSignatureByKey();
     else if (is ("pianoRoll.browseScores"))
     {
         if (onBrowseScores)
@@ -4445,5 +4485,128 @@ juce::PopupMenu PianoRollComponent::viewMenu()
             repaint();
         });
     return menu;
+}
+
+// --- the pattern's time markers (round 168g, docs/analise/REA_rodada168g.md §M13) --------------------------------------
+juce::PopupMenu PianoRollComponent::markersMenu()
+{
+    // FL's EEMarkerMenu (the Piano roll shows the Playlist's Time markers items, on the pattern's own markers)
+    juce::PopupMenu menu;
+    menu.addItem (tr ("Add one...") + keyText ("pianoRoll.markerAdd"), [this] { runAction ("pianoRoll.markerAdd"); });
+    menu.addItem (tr ("Add auto") + keyText ("pianoRoll.markerAuto"), [this] { runAction ("pianoRoll.markerAuto"); });
+    menu.addItem (tr ("Add time signature change...") + keyText ("pianoRoll.markerSignature"), [this] { runAction ("pianoRoll.markerSignature"); });
+    const auto any = ! currentPattern (engine.getSong()).markers.empty();
+    menu.addSeparator();
+    menu.addItem (tr ("Delete all markers"), any, false, [this] {
+        engine.editSong ([] (Song& s) { currentPattern (s).markers.clear(); });
+        repaint();
+    });
+    return menu;
+}
+
+std::int64_t PianoRollComponent::markerKeyTick() const
+{
+    // like the Playlist's (FL FUN_0122b0d0 / FUN_01229d20): the time selection's start; else the playhead when it is
+    // in view; else the bar line nearest the view's left edge
+    if (timeFrom >= 0 && timeTo > timeFrom)
+        return timeFrom;
+    const auto left = std::max (0.0, scrollTicks);
+    const auto right = xToTick (gridArea().getRight());
+    if (playheadTick >= left && playheadTick <= right)
+        return (std::int64_t) playheadTick;
+    const auto bar = (std::int64_t) ppq * juce::jmax (1, engine.getSong().beatsPerBar);
+    const auto at = (std::int64_t) left;
+    return at % bar > bar / 2 ? (at / bar + 1) * bar : at / bar * bar;
+}
+
+void PianoRollComponent::editPatternMarker (std::int64_t tick, int existing)
+{
+    const auto& markers = currentPattern (engine.getSong()).markers;
+    const auto current = existing >= 0 && existing < (int) markers.size() ? juce::String::fromUTF8 (markers[(std::size_t) existing].name.c_str())
+                                                                          : tr ("Marker");
+    // FL's "Marker name" prompt
+    auto* window = new juce::AlertWindow (existing >= 0 ? tr ("Rename marker") : tr ("New marker"), {}, juce::MessageBoxIconType::NoIcon, this);
+    window->addTextEditor ("name", current);
+    window->addButton (tr ("OK"), 1, juce::KeyPress (juce::KeyPress::returnKey));
+    window->addButton (tr ("Cancel"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<PianoRollComponent> safe (this);
+    window->enterModalState (true, juce::ModalCallbackFunction::create ([safe, tick, existing, window] (int result) {
+                                 if (result != 1 || safe == nullptr)
+                                     return;
+                                 const auto name = window->getTextEditorContents ("name").trim().toStdString();
+                                 safe->engine.editSong ([tick, existing, name] (Song& s) {
+                                     auto& p = currentPattern (s);
+                                     if (existing < 0)
+                                         noteedit::addPatternMarker (p, { tick, name, 0, 4 });
+                                     else if (existing < (int) p.markers.size())
+                                         p.markers[(std::size_t) existing].name = name;
+                                 });
+                                 safe->repaint();
+                             }),
+                             true);
+}
+
+void PianoRollComponent::addPatternSignatureByKey()
+{
+    const auto& song = engine.getSong();
+    const auto hasTime = timeFrom >= 0 && timeTo > timeFrom;
+    const auto from = hasTime ? timeFrom : snap ((double) markerKeyTick(), true);
+    const auto to = hasTime ? timeTo : (std::int64_t) -1;
+    const auto current = noteedit::patternSignatureAt (currentPattern (song), from, song.beatsPerBar);
+
+    auto* window = new juce::AlertWindow (tr ("Add time signature change..."), {}, juce::MessageBoxIconType::NoIcon, this);
+    juce::StringArray numerators, denominators;
+    for (int n = 1; n <= 32; ++n)
+        numerators.add (juce::String (n));
+    for (int d : { 1, 2, 4, 8, 16, 32 })
+        denominators.add (juce::String (d));
+    window->addComboBox ("numerator", numerators, tr ("Numerator"));
+    window->addComboBox ("denominator", denominators, tr ("Denominator"));
+    window->getComboBoxComponent ("numerator")->setText (juce::String (current.first), juce::dontSendNotification);
+    window->getComboBoxComponent ("denominator")->setText (juce::String (current.second), juce::dontSendNotification);
+    window->addButton (tr ("OK"), 1, juce::KeyPress (juce::KeyPress::returnKey));
+    window->addButton (tr ("Cancel"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<PianoRollComponent> safe (this);
+    window->enterModalState (true, juce::ModalCallbackFunction::create ([safe, from, to, window] (int result) {
+                                 if (result != 1 || safe == nullptr)
+                                     return;
+                                 const auto n = window->getComboBoxComponent ("numerator")->getText().getIntValue();
+                                 const auto d = window->getComboBoxComponent ("denominator")->getText().getIntValue();
+                                 safe->engine.editSong ([from, to, n, d] (Song& s) {
+                                     noteedit::addPatternSignatureChange (currentPattern (s), from, to, n, d, s.beatsPerBar);
+                                 });
+                                 safe->repaint();
+                             }),
+                             true);
+}
+
+int PianoRollComponent::markerAtX (int x) const
+{
+    // the flag and the name to its right (the last one drawn wins, as it is on top)
+    const auto& markers = currentPattern (engine.getSong()).markers;
+    for (int i = (int) markers.size() - 1; i >= 0; --i)
+    {
+        const auto mx = (int) tickToX ((double) markers[(std::size_t) i].tick);
+        if (x >= mx - 3 && x <= mx + 60)
+            return i;
+    }
+    return -1;
+}
+
+void PianoRollComponent::showPatternMarkerMenu (int index)
+{
+    juce::PopupMenu menu;
+    menu.addItem (tr ("Rename marker..."), [this, index] { editPatternMarker (0, index); });
+    menu.addItem (tr ("Delete marker"), [this, index] {
+        engine.editSong ([index] (Song& s) {
+            auto& markers = currentPattern (s).markers;
+            if (index >= 0 && index < (int) markers.size())
+                markers.erase (markers.begin() + index);
+        });
+        repaint();
+    });
+    menu.addSeparator();
+    menu.addSubMenu (tr ("Time markers"), markersMenu());
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
 }
 } // namespace lynx

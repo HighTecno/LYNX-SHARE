@@ -875,6 +875,9 @@ std::vector<int> insertSpace (Pattern& pattern, const std::vector<int>& channelN
             n.start += to - from;
             moved.push_back (i);
         }
+    for (auto& m : pattern.markers) // (FUN_00e3b2b0: the pattern's markers move with the notes)
+        if (m.tick >= from)
+            m.tick += to - from;
     std::sort (moved.begin(), moved.end());
     return moved;
 }
@@ -909,6 +912,12 @@ std::vector<int> deleteSpace (Pattern& pattern, const std::vector<int>& channelN
     for (auto i : moved)
         shifted.push_back (i - (int) (std::lower_bound (removed.begin(), removed.end(), i) - removed.begin()));
     remove (pattern, removed);
+    // the pattern's markers in the space go, the later ones move left (FUN_00e3b2b0)
+    auto& markers = pattern.markers;
+    markers.erase (std::remove_if (markers.begin(), markers.end(), [&] (const Marker& m) { return m.tick >= from && m.tick < to; }), markers.end());
+    for (auto& m : markers)
+        if (m.tick >= to)
+            m.tick -= to - from;
     std::sort (shifted.begin(), shifted.end());
     return shifted;
 }
@@ -926,7 +935,82 @@ void trimToSelection (Pattern& pattern, int channel, std::int64_t from, std::int
     auto last = end;
     for (auto i : notesOf())
         last = std::max (last, pattern.notes[(std::size_t) i].start + 1);
+    for (const auto& m : pattern.markers)
+        last = std::max (last, m.tick + 1);
     deleteSpace (pattern, notesOf(), to, last);
     deleteSpace (pattern, notesOf(), 0, from);
+}
+
+// --- the Piano roll's pattern time markers (round 168g) ----------------------------------------------------------------
+namespace
+{
+void sortMarkers (std::vector<Marker>& markers)
+{
+    std::stable_sort (markers.begin(), markers.end(), [] (const Marker& x, const Marker& y) { return x.tick < y.tick; });
+}
+} // namespace
+
+int addPatternMarker (Pattern& pattern, const Marker& marker)
+{
+    auto m = marker;
+    m.tick = std::max<std::int64_t> (0, m.tick);
+    pattern.markers.push_back (m);
+    sortMarkers (pattern.markers);
+    for (int i = (int) pattern.markers.size() - 1; i >= 0; --i)
+        if (pattern.markers[(std::size_t) i] == m)
+            return i;
+    return -1;
+}
+
+int addPatternAutoMarker (Pattern& pattern, std::int64_t tick)
+{
+    tick = std::max<std::int64_t> (0, tick);
+    for (int i = 0; i < (int) pattern.markers.size(); ++i)
+        if (pattern.markers[(std::size_t) i].tick == tick)
+            return i;
+    std::string name;
+    for (int n = 1;; ++n)
+    {
+        name = n == 1 ? std::string ("Auto") : "Auto #" + std::to_string (n);
+        if (std::none_of (pattern.markers.begin(), pattern.markers.end(), [&name] (const Marker& m) { return m.name == name; }))
+            break;
+    }
+    Marker m;
+    m.tick = tick;
+    m.name = name;
+    return addPatternMarker (pattern, m);
+}
+
+std::pair<int, int> patternSignatureAt (const Pattern& pattern, std::int64_t tick, int beatsPerBar)
+{
+    std::pair<int, int> out { std::max (1, beatsPerBar), 4 };
+    for (const auto& m : pattern.markers)
+        if (m.isSignature() && m.tick <= tick)
+            out = { m.numerator, m.denominator };
+    return out;
+}
+
+void addPatternSignatureChange (Pattern& pattern, std::int64_t from, std::int64_t to, int numerator, int denominator, int beatsPerBar)
+{
+    numerator = std::clamp (numerator, 1, 32);
+    denominator = std::clamp (denominator, 1, 32);
+    from = std::max<std::int64_t> (0, from / ppq * ppq); // (floored to a beat, like the Playlist's)
+    const auto before = patternSignatureAt (pattern, from, beatsPerBar);
+    auto add = [&pattern] (std::int64_t tick, int n, int d) {
+        pattern.markers.erase (std::remove_if (pattern.markers.begin(), pattern.markers.end(),
+                                               [tick] (const Marker& m) { return m.isSignature() && m.tick == tick; }),
+                               pattern.markers.end());
+        Marker m;
+        m.tick = tick;
+        m.numerator = n;
+        m.denominator = d;
+        m.name = std::to_string (n) + "/" + std::to_string (d);
+        addPatternMarker (pattern, m);
+    };
+    const auto hadEnd = to > from
+                        && std::any_of (pattern.markers.begin(), pattern.markers.end(), [&] (const Marker& m) { return m.isSignature() && m.tick == to / ppq * ppq; });
+    add (from, numerator, denominator);
+    if (to > from && ! hadEnd)
+        add (to / ppq * ppq, before.first, before.second);
 }
 } // namespace lynx::noteedit

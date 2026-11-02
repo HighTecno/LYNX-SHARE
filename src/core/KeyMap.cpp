@@ -191,6 +191,10 @@ std::vector<Action> makeActions()
         { "pianoRoll.openScore", TR_NOOP ("Open score..."), Context::pianoRoll, {} },
         { "pianoRoll.saveScore", TR_NOOP ("Save score as..."), Context::pianoRoll, {} },
         { "pianoRoll.browseScores", TR_NOOP ("Browse scores"), Context::pianoRoll, {} },
+        // FL's Piano roll › Time markers: the same EEMarker* items as the Playlist's, on the pattern's markers (round 168g)
+        { "pianoRoll.markerAdd", TR_NOOP ("Pattern time markers: Add one..."), Context::pianoRoll, { chord ('T', alt) } },
+        { "pianoRoll.markerAuto", TR_NOOP ("Pattern time markers: Add auto"), Context::pianoRoll, { chord ('T', ctrl) } },
+        { "pianoRoll.markerSignature", TR_NOOP ("Pattern time markers: Add time signature change..."), Context::pianoRoll, { chord ('T', shift | alt) } },
         // the tools and the other single letters (FL's keys; issue #12: they were fixed in the editor and won over a
         // global shortcut given the same key)
         { "pianoRoll.tool.pencil", TR_NOOP ("Tool: Pencil"), Context::pianoRoll, { chord ('P') } },

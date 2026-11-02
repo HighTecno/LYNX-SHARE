@@ -280,4 +280,16 @@ std::vector<int> deleteSpace (Pattern& pattern, const std::vector<int>& channelN
 // Trim (FUN_00eb35f0, the "trim space" branch): deletes the space after `to` (to the pattern's end `end`) and before
 // `from`, so only the time selection is left, at the start of the pattern.
 void trimToSelection (Pattern& pattern, int channel, std::int64_t from, std::int64_t to, std::int64_t end);
+
+// The Piano roll's pattern time markers (FL's Piano roll › Time markers, the same EEMarker* items as the Playlist's on
+// the pattern's own list, editor +0xd84; .flp: inside the pattern's events). Add one (Alt+T, FUN_0122b0d0 Tag 0: the
+// name dialog, then FUN_00e543b0 type 0): the new marker's index.
+int addPatternMarker (Pattern& pattern, const Marker& marker);
+// Ctrl+T "Add auto": "Auto", "Auto #2"... at `tick`; a marker already there is kept (its index is returned)
+int addPatternAutoMarker (Pattern& pattern, std::int64_t tick);
+// Shift+Alt+T (FUN_0122b0d0 Tag 2): a num/den change at `from` (floored to a beat) named "num/den" (FL's "%d/%d"); with a
+// time selection ending at `to`, the signature in force before comes back there (unless a change is already there)
+void addPatternSignatureChange (Pattern& pattern, std::int64_t from, std::int64_t to, int numerator, int denominator, int beatsPerBar);
+// the pattern's signature at `tick`: its last signature marker at or before it, else beatsPerBar / 4
+std::pair<int, int> patternSignatureAt (const Pattern& pattern, std::int64_t tick, int beatsPerBar);
 } // namespace lynx::noteedit

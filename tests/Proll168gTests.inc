@@ -172,8 +172,78 @@ TEST (proll168g_piano_roll_keys_are_fl_s)
     CHECK (map.find ({ 'M', ctrl }, pr, false) == "pianoRoll.importMidi");
     CHECK (map.find ({ 'M', (std::uint8_t) (ctrl | shift) }, pr, false) == "pianoRoll.exportMidi");
     CHECK (map.find ({ 'V', (std::uint8_t) (ctrl | shift) }, pr, false) == "pianoRoll.pasteMidiClipboard");
+    CHECK (map.find ({ 'T', alt }, pr, false) == "pianoRoll.markerAdd");
+    CHECK (map.find ({ 'T', ctrl }, pr, false) == "pianoRoll.markerAuto");
+    CHECK (map.find ({ 'T', (std::uint8_t) (shift | alt) }, pr, false) == "pianoRoll.markerSignature");
     // outside the Piano roll the global keys stay (metronome, wait for input, quick audio recording)
     CHECK (map.find ({ 'M', ctrl }, Context::playlist, false) == "transport.metronome");
     CHECK (map.find ({ 'I', ctrl }, Context::global, false) == "record.waitForInput");
     CHECK (map.conflicts().empty());
+}
+
+TEST (proll168g_flp_pattern_markers_stay_with_their_pattern)
+{
+    // FL writes a pattern's Piano roll markers between its 0x41 and the next section (Edlan & Ella Noël's pattern 10:
+    // 0x94 = 11 << 24 | 384 "Loop: Bar", 6 << 24 | 1536 "Length"; Sid De La Cruz's patterns: type 8 signatures); the
+    // Playlist's come after the arrangement / playlist events. Before round 168g they all went to the Playlist.
+    FlpBuilder b (96);
+    b.ascii (0xC7, "25.1.2.4893");
+    b.u8 (0x41); b.u16 (10);
+    b.utf16 (0xC1, u"Halftime");
+    b.u8 (0x94); b.u32 (11u << 24 | 384);
+    b.u8 (0x21); b.u8 (4);
+    b.u8 (0x22); b.u8 (4);
+    b.utf16 (0xCD, u"Loop: Bar");
+    b.u8 (0x94); b.u32 (8u << 24 | 768);
+    b.u8 (0x21); b.u8 (3);
+    b.u8 (0x22); b.u8 (4);
+    b.utf16 (0xCD, u"3/4");
+    b.u8 (0x41); b.u16 (11);
+    b.u8 (0x63); b.u16 (0); // the arrangement
+    b.u8 (0x94); b.u32 (1920);
+    b.utf16 (0xCD, u"Chorus");
+    const auto p = flp::parseProject (b.bytes);
+    REA167K_REQUIRE (p.arrangements.size() == 1 && p.arrangements[0].markers.size() == 1);
+    CHECK (p.arrangements[0].markers[0].position == 1920 && p.arrangements[0].markers[0].name.find ("Chorus") == 0);
+    const auto it = std::find_if (p.patterns.begin(), p.patterns.end(), [] (const flp::Pattern& x) { return x.index == 10; });
+    REA167K_REQUIRE (it != p.patterns.end() && it->markers.size() == 2);
+    CHECK (it->markers[0].type == 11 && it->markers[0].position == 384 && it->markers[0].name.find ("Loop: Bar") == 0);
+    CHECK (it->markers[1].type == 8 && it->markers[1].numerator == 3 && it->markers[1].denominator == 4);
+
+    const auto song = lynx::importFlp (p);
+    CHECK (song.markers().size() == 1);
+    const auto pit = std::find_if (song.patterns.begin(), song.patterns.end(), [] (const lynx::Pattern& x) { return x.name == "Halftime"; });
+    REA167K_REQUIRE (pit != song.patterns.end() && pit->markers.size() == 2);
+    CHECK (pit->markers[0].tick == 384 * lynx::ppq / 96 && pit->markers[0].action == 11 && pit->markers[0].name == "Loop: Bar");
+    CHECK (pit->markers[1].tick == 768 * lynx::ppq / 96 && pit->markers[1].isSignature() && pit->markers[1].numerator == 3);
+}
+
+TEST (proll168g_pattern_markers_add_auto_signature_and_follow_the_space)
+{
+    using namespace lynx::noteedit;
+    lynx::Pattern p;
+    const auto bar = 4 * lynx::ppq;
+    CHECK (addPatternAutoMarker (p, bar) == 0 && p.markers[0].name == "Auto");
+    CHECK (addPatternAutoMarker (p, bar) == 0 && p.markers.size() == 1); // one already there: kept
+    addPatternAutoMarker (p, 0);
+    CHECK (p.markers.size() == 2 && p.markers[0].tick == 0 && p.markers[0].name == "Auto #2");
+
+    // a 3/4 change over [bar, 2 bars): the old 4/4 comes back at its end; names are FL's "%d/%d"
+    addPatternSignatureChange (p, bar + 10, 2 * bar, 3, 4, 4);
+    REA167K_REQUIRE (p.markers.size() == 4);
+    CHECK (patternSignatureAt (p, bar + lynx::ppq, 4) == std::make_pair (3, 4));
+    CHECK (patternSignatureAt (p, 2 * bar, 4) == std::make_pair (4, 4));
+    CHECK (patternSignatureAt (p, 0, 4) == std::make_pair (4, 4));
+    const auto sig = std::find_if (p.markers.begin(), p.markers.end(), [] (const lynx::Marker& m) { return m.isSignature() && m.numerator == 3; });
+    CHECK (sig != p.markers.end() && sig->tick == bar && sig->name == "3/4");
+
+    // Insert / Delete space move the markers like the notes (FUN_00e3b2b0); the ones inside a deleted space go
+    lynx::Pattern q;
+    addPatternMarker (q, { bar, "A", 0, 4 });
+    addPatternMarker (q, { 3 * bar, "B", 0, 4 });
+    insertSpace (q, {}, bar, 2 * bar, false);
+    CHECK (q.markers[0].tick == 2 * bar && q.markers[1].tick == 4 * bar);
+    deleteSpace (q, {}, 0, 3 * bar);
+    REA167K_REQUIRE (q.markers.size() == 1);
+    CHECK (q.markers[0].name == "B" && q.markers[0].tick == bar);
 }

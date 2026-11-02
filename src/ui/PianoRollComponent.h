@@ -123,6 +123,7 @@ public:
     std::int64_t timeSelectionFrom() const noexcept { return timeFrom; }
     std::int64_t timeSelectionTo() const noexcept { return timeTo; }
     std::vector<int> selectionForTests() const { return selection; }
+    std::int64_t markerKeyTickForTests() const { return markerKeyTick(); }
     juce::String chordBubbleTextForTests() const { return chordBubble.isVisible() ? chordBubble.getText() : juce::String(); }
 
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
@@ -397,6 +398,13 @@ private:
     juce::PopupMenu fileMenu();
     juce::PopupMenu editMenu();
     juce::PopupMenu viewMenu();
+    // FL's Piano roll › Time markers on the pattern's own markers (round 168g)
+    juce::PopupMenu markersMenu();
+    std::int64_t markerKeyTick() const;   // Alt+T / Ctrl+T: the time selection's start, the playhead in view, else a bar
+    void editPatternMarker (std::int64_t tick, int existing); // the name dialog (existing < 0: a new marker)
+    void addPatternSignatureByKey();
+    int markerAtX (int x) const;          // the pattern marker drawn under x on the ruler, or -1
+    void showPatternMarkerMenu (int index);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PianoRollComponent)
 };
