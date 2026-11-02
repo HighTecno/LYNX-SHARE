@@ -11,7 +11,11 @@
 #include "core/NoteEdit.h"
 #include "core/NoteTools.h"
 #include "engine/MidiFileIo.h"
+#include "engine/Mp3Format.h"
+#include "core/PianoRollTools.h"
+#include "ui/BrowserComponent.h"
 #include "ui/Dialogs.h"
+#include "ui/MidiClipboard.h"
 #include "engine/Text.h"
 
 #include <optional>
@@ -73,6 +77,46 @@ const std::vector<notetools::ScaleInfo>& scales()
 {
     return notetools::scales();
 }
+
+// a detected chord in the chosen note names (Settings › General, round 165f): "Do m7/Mib"; "" when none
+juce::String chordName (const std::vector<int>& keys)
+{
+    const auto chord = prtools::detectChord (keys, notenames::flats());
+    if (! chord)
+        return {};
+    auto name = juce::String (chord->name);
+    auto quality = name.fromFirstOccurrenceOf (name.substring (0, name.length() > 1 && (name[1] == '#' || name[1] == 'b') ? 2 : 1), false, false)
+                       .upToFirstOccurrenceOf ("/", false, false);
+    auto text = juce::String (notenames::pitchName (chord->root)) + quality;
+    if (name.contains ("/"))
+        text << "/" << notenames::pitchName (chord->bass);
+    return text;
+}
+
+// View › Background waveform (round 168g): one for every editor, like FL's (PTR_DAT_015e2698 / DAT_016ba824)
+struct BackgroundWave
+{
+    juce::File file;
+    std::vector<float> lo, hi; // per peak block
+    double sampleRate = 44100.0;
+    std::int64_t samples = 0;
+    static constexpr int perPeak = 256;
+};
+
+std::shared_ptr<const BackgroundWave>& backgroundWave()
+{
+    static std::shared_ptr<const BackgroundWave> wave;
+    return wave;
+}
+
+bool& backgroundWaveOn()
+{
+    static bool on = false;
+    return on;
+}
+
+bool isScoreFile (const juce::File& f) { return f.hasFileExtension ("fsc"); }
+bool isMidiFile (const juce::File& f) { return f.hasFileExtension ("mid;midi"); }
 
 } // namespace
 
@@ -227,6 +271,15 @@ PianoRollComponent::PianoRollComponent (AudioEngine& e)
     chordLabel.setTooltip (tr ("Chord: the chord of the keys held on the MIDI keyboard or the typing piano, else of the selected notes"));
     chordLabel.setInterceptsMouseClicks (true, false);
     addAndMakeVisible (chordLabel);
+
+    // "Show chord name for selection" (round 168g): FL shows it as a hint 16 px into the editor's top-left corner
+    chordBubble.setJustificationType (juce::Justification::centred);
+    chordBubble.setFont (theme::font (theme::type::body, true));
+    chordBubble.setColour (juce::Label::textColourId, theme::colour::textPrimary);
+    chordBubble.setColour (juce::Label::backgroundColourId, theme::colour::bg4.withAlpha (0.94f));
+    chordBubble.setColour (juce::Label::outlineColourId, theme::colour::accent.withAlpha (0.8f));
+    chordBubble.setInterceptsMouseClicks (false, false);
+    addChildComponent (chordBubble);
 
     for (auto* box : { &chordBox, &scaleBox })
     {
@@ -749,8 +802,9 @@ void PianoRollComponent::paint (juce::Graphics& g)
             if (! rows.shown (key) || y > grid.getBottom() || y + rowHeight < grid.getY())
                 continue;
 
-            auto row = isBlackKey (key) ? rowBlack : rowWhite;
-            if (inScale (key))
+            // Note grid highlights (Alt+B, round 168g): off, every row looks the same (FL's "BlackKeys" option)
+            auto row = gridHighlights && isBlackKey (key) ? rowBlack : rowWhite;
+            if (gridHighlights && inScale (key))
                 row = row.interpolatedWith (info, 0.10f);
             if (key == hover.key && drag == Drag::none)
                 row = row.interpolatedWith (textPrimary, 0.04f); // the row under the mouse
@@ -765,6 +819,15 @@ void PianoRollComponent::paint (juce::Graphics& g)
         }
 
         drawVerticalGrid (grid);
+        paintBackgroundWave (g, grid);
+
+        // the time selection (Ctrl+drag on the ruler): Insert / Delete space, Trim
+        if (timeFrom >= 0 && timeTo > timeFrom)
+        {
+            g.setColour (selectionFill.withMultipliedAlpha (0.45f));
+            g.fillRect (juce::Rectangle<float> ((float) tickToX ((double) timeFrom), (float) grid.getY(),
+                                                (float) ((double) (timeTo - timeFrom) * pixelsPerTick), (float) grid.getHeight()));
+        }
 
         // outside the pattern is darkened
         const auto endX = (float) tickToX ((double) patternLength);
@@ -1017,6 +1080,15 @@ void PianoRollComponent::paint (juce::Graphics& g)
 
         const auto firstBar = (std::int64_t) std::floor (scrollTicks / (double) bar);
         const auto lastBar = (std::int64_t) std::ceil (xToTick (grid.getRight()) / (double) bar);
+
+        if (timeFrom >= 0 && timeTo > timeFrom) // the time selection on the ruler
+        {
+            const auto x0 = (float) tickToX ((double) timeFrom), x1 = (float) tickToX ((double) timeTo);
+            g.setColour (accent.withAlpha (0.35f));
+            g.fillRect (juce::Rectangle<float> (x0, (float) rulerTop, x1 - x0, (float) timelineHeight - 1.0f));
+            g.setColour (accent);
+            g.fillRect (juce::Rectangle<float> (x0, (float) rulerTop, x1 - x0, 2.0f));
+        }
 
         for (auto b = firstBar; b <= lastBar; ++b)
         {
@@ -1801,6 +1873,8 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
                 if (const auto& n = notes[(std::size_t) i]; (double) n.start >= t0 && (double) n.start < t1)
                     s.push_back (i);
             rubberBand = juce::Rectangle<int>::leftTopRightBottom ((int) tickToX (t0), gridArea().getY(), (int) tickToX (t1), gridArea().getBottom());
+            timeFrom = (std::int64_t) t0; // (round 168g: the range stays as the time selection)
+            timeTo = (std::int64_t) t1;
             setSelection (s);
             return;
         }
@@ -2713,6 +2787,10 @@ void PianoRollComponent::showMoreMenu()
     const auto grid = gridTicks();
     const auto bar = (std::int64_t) ppq * juce::jmax (1, engine.getSong().beatsPerBar);
     juce::PopupMenu menu;
+    menu.addSubMenu (tr ("File"), fileMenu());
+    menu.addSubMenu (tr ("Edit"), editMenu());
+    menu.addSubMenu (tr ("View"), viewMenu());
+    menu.addSeparator();
     menu.addSectionHeader (tr ("Note operations (selection, or all notes)"));
     menu.addItem (tr ("Chop to grid") + "\tCtrl+U", [this, grid] { runOperation ([grid] (Pattern& p, const std::vector<int>& t) { return noteedit::chop (p, t, grid); }); });
     menu.addItem (tr ("Join touching notes") + "\tCtrl+G", [this] { runOperation ([] (Pattern& p, const std::vector<int>& t) { noteedit::join (p, t); return std::vector<int> {}; }); });
@@ -2746,6 +2824,8 @@ void PianoRollComponent::showMoreMenu()
     menu.addItem (tr ("Fold to the scale (hide the other keys and their notes)"), scaleIndex() > 0, foldToScale,
                   [this] { setFoldToScale (! foldToScale); });
     menu.addItem (tr ("Chord stamp: the clicked key is the top note"), true, chordTopDown, [this] { chordTopDown = ! chordTopDown; });
+    menu.addItem (tr ("Stamp: none (single notes)") + keyText ("pianoRoll.stampNone"), chordBox.getSelectedId() != 1, false,
+                  [this] { runAction ("pianoRoll.stampNone"); });
     menu.addItem (tr ("Move the notes onto the scale"), scaleIndex() > 0, false, [this] {
         const auto root = scaleRoot(), scale = scaleIndex();
         runOperation ([root, scale] (Pattern& p, const std::vector<int>& t) { notetools::snapNotesToScale (p, t, root, scale); return t; });
@@ -3058,6 +3138,11 @@ juce::PopupMenu PianoRollComponent::selectMenu()
     menu.addItem (tr ("Invert selection") + "\tShift+I", [this] { runAction ("pianoRoll.invertSelection"); });
     menu.addItem (tr ("Deselect") + "\tEsc", ! selection.empty(), false, [this] { setSelection ({}); });
     menu.addSeparator();
+    // FL's Select items with their keys (round 168g): they add to the selection
+    menu.addItem (tr ("Select one at random") + keyText ("pianoRoll.selectRandomOne"), [this] { runAction ("pianoRoll.selectRandomOne"); });
+    menu.addItem (tr ("Select more at random") + keyText ("pianoRoll.selectRandomMore"), [this] { runAction ("pianoRoll.selectRandomMore"); });
+    menu.addItem (tr ("Select odd (swung) notes") + keyText ("pianoRoll.selectOddSteps"), [this] { runAction ("pianoRoll.selectOddSteps"); });
+    menu.addSeparator();
     menu.addItem (tr ("Odd notes (every other one)"), [choose] { choose ([] (const Pattern& p, const std::vector<int>& t) { return notetools::selectOdd (p, t); }); });
     menu.addItem (tr ("Even notes"), [choose] {
         choose ([] (const Pattern& p, const std::vector<int>& t) { return notetools::invertSelection (t, notetools::selectOdd (p, t)); });
@@ -3137,20 +3222,50 @@ void PianoRollComponent::updateChordReadout()
             if (i >= 0 && i < (int) notes.size())
                 keys.push_back (notes[(std::size_t) i].key);
     }
-    const auto chord = prtools::detectChord (keys, notenames::flats());
-    juce::String text;
-    if (chord)
-    {
-        // the root and the bass in the chosen note names (Settings › General, round 165f): "Do m7/Mib"
-        auto name = juce::String (chord->name);
-        auto quality = name.fromFirstOccurrenceOf (juce::String (chord->name).substring (0, name.length() > 1 && (name[1] == '#' || name[1] == 'b') ? 2 : 1),
-                                                   false, false).upToFirstOccurrenceOf ("/", false, false);
-        text = juce::String (notenames::pitchName (chord->root)) + quality;
-        if (name.contains ("/"))
-            text << "/" << notenames::pitchName (chord->bass);
-    }
+    const auto text = chordName (keys);
     if (chordLabel.getText() != text)
         chordLabel.setText (text, juce::dontSendNotification);
+    updateChordBubble();
+}
+
+void PianoRollComponent::updateChordBubble()
+{
+    const auto now = juce::Time::getMillisecondCounter();
+    if (! showChordName)
+    {
+        chordBubble.setVisible (false);
+        chordBubbleSelection = selection;
+        return;
+    }
+    if (selection != chordBubbleSelection)
+    {
+        // FL (FUN_00e5a850 → FUN_00d32da0, on every selection change): the different keys of the selected notes, muted
+        // ones left out; 2 to 10 of them name a chord
+        chordBubbleSelection = selection;
+        const auto& notes = currentPattern (engine.getSong()).notes;
+        std::vector<int> keys;
+        for (auto i : selection)
+            if (i >= 0 && i < (int) notes.size() && ! notes[(std::size_t) i].muted)
+                keys.push_back (notes[(std::size_t) i].key);
+        std::sort (keys.begin(), keys.end());
+        keys.erase (std::unique (keys.begin(), keys.end()), keys.end());
+        const auto text = keys.size() >= 2 && keys.size() <= 10 ? chordName (keys) : juce::String();
+        if (text.isNotEmpty())
+        {
+            chordBubble.setText (text, juce::dontSendNotification);
+            const auto font = chordBubble.getFont();
+            const auto width = juce::roundToInt (juce::GlyphArrangement::getStringWidth (font, text)) + 20;
+            const auto grid = gridArea();
+            chordBubble.setBounds (grid.getX() + 16, grid.getY() + 16, width, juce::roundToInt (font.getHeight()) + 10);
+            chordBubble.setVisible (true);
+            chordBubble.toFront (false);
+            chordBubbleUntil = now + 2000; // (FL keeps its chord readout at least 2 s: FUN_00d32da0 +0xac)
+        }
+        else
+            chordBubble.setVisible (false);
+    }
+    else if (chordBubble.isVisible() && now > chordBubbleUntil)
+        chordBubble.setVisible (false);
 }
 
 bool PianoRollComponent::runAction (const std::string& id)
@@ -3191,6 +3306,93 @@ bool PianoRollComponent::runAction (const std::string& id)
         selectByColour (! selection.empty() && selection.front() < (int) notes.size() ? notes[(std::size_t) selection.front()].colour : noteColour);
     }
     else if (is ("pianoRoll.invertSelection")) setSelection (notetools::invertSelection (channelNotes(), selection));
+    // round 168g: FL's View / Select / Stamp / Edit / File items
+    else if (is ("pianoRoll.gridHighlights"))
+    {
+        gridHighlights = ! gridHighlights;
+        if (EditorGlobals::get().onOptionsChanged)
+            EditorGlobals::get().onOptionsChanged();
+        repaint();
+    }
+    else if (is ("pianoRoll.backgroundWave")) setBackgroundWaveShown (! isBackgroundWaveShown());
+    else if (is ("pianoRoll.showChordName"))
+    {
+        showChordName = ! showChordName;
+        chordBubbleSelection.clear(); // shows the current selection's chord at once
+        if (EditorGlobals::get().onOptionsChanged)
+            EditorGlobals::get().onOptionsChanged();
+        updateChordBubble();
+    }
+    else if (is ("pianoRoll.selectRandomOne") || is ("pianoRoll.selectRandomMore"))
+        setSelection (noteedit::selectRandomMore (currentPattern (engine.getSong()), channelNotes(), selection, is ("pianoRoll.selectRandomMore"),
+                                                  (std::uint32_t) juce::Random::getSystemRandom().nextInt()));
+    else if (is ("pianoRoll.selectOddSteps"))
+        setSelection (noteedit::selectOddSteps (currentPattern (engine.getSong()), channelNotes(), selection, ticksPerStep));
+    else if (is ("pianoRoll.stampNone")) chordBox.setSelectedId (1, juce::sendNotificationSync);
+    else if (is ("pianoRoll.insertSpace")) spaceOperation (0);
+    else if (is ("pianoRoll.sliceInsertSpace")) spaceOperation (1);
+    else if (is ("pianoRoll.deleteSpace")) spaceOperation (2);
+    else if (is ("pianoRoll.trimSpace")) spaceOperation (3);
+    else if (is ("pianoRoll.deleteAll")) deleteAllNotes();
+    else if (is ("pianoRoll.insertControllerValue")) insertControllerValue();
+    else if (is ("pianoRoll.importMidi") || is ("pianoRoll.openScore"))
+    {
+        // FL: Import MIDI and Open score share one file window (FUN_0120b340): .fsc, .mid or both
+        const auto score = is ("pianoRoll.openScore");
+        chooser = std::make_unique<juce::FileChooser> (score ? tr ("Open score") : tr ("Import MIDI"), juce::File(),
+                                                       score ? "*.fsc;*.mid;*.midi" : "*.mid;*.midi");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [safe = juce::Component::SafePointer<PianoRollComponent> (this)] (const juce::FileChooser& fc) {
+                                  if (safe != nullptr && fc.getResult().existsAsFile())
+                                      safe->loadFile (fc.getResult());
+                              });
+    }
+    else if (is ("pianoRoll.exportMidi"))
+    {
+        const auto& song = engine.getSong();
+        const auto name = juce::String::fromUTF8 (song.patterns[(std::size_t) song.currentPattern].name.c_str());
+        chooser = std::make_unique<juce::FileChooser> (tr ("Export MIDI"), juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile (name + ".mid"),
+                                                       "*.mid");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [safe = juce::Component::SafePointer<PianoRollComponent> (this)] (const juce::FileChooser& fc) {
+                                  auto file = fc.getResult();
+                                  if (safe == nullptr || file == juce::File())
+                                      return;
+                                  if (! file.hasFileExtension ("mid;midi"))
+                                      file = file.withFileExtension (".mid");
+                                  juce::String error;
+                                  if (! MidiFileIo::savePattern (safe->engine.getSong(), safe->engine.getSong().currentPattern, file, error))
+                                      juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "MIDI", error);
+                              });
+    }
+    else if (is ("pianoRoll.saveScore"))
+    {
+        const auto channel = engine.getSelectedChannel();
+        const auto& song = engine.getSong();
+        auto name = channel >= 0 && channel < (int) song.channels.size() ? juce::String::fromUTF8 (song.channels[(std::size_t) channel].name.c_str())
+                                                                        : juce::String ("Score");
+        chooser = std::make_unique<juce::FileChooser> (tr ("Save score as"),
+                                                       juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile (juce::File::createLegalFileName (name) + ".fsc"),
+                                                       "*.fsc;*.mid");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [safe = juce::Component::SafePointer<PianoRollComponent> (this)] (const juce::FileChooser& fc) {
+                                  auto file = fc.getResult();
+                                  if (safe == nullptr || file == juce::File())
+                                      return;
+                                  if (! file.hasFileExtension ("fsc;mid;midi"))
+                                      file = file.withFileExtension (".fsc");
+                                  if (! safe->saveScore (file))
+                                      juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, tr ("Save score as"),
+                                                                              tr ("There are no notes to save, or the file could not be written."));
+                              });
+    }
+    else if (is ("pianoRoll.copyMidiClipboard")) copyToMidiClipboard();
+    else if (is ("pianoRoll.pasteMidiClipboard")) pasteFromMidiClipboard();
+    else if (is ("pianoRoll.browseScores"))
+    {
+        if (onBrowseScores)
+            onBrowseScores();
+    }
     else if (is ("pianoRoll.groupNotes") || is ("pianoRoll.ungroupNotes"))
     {
         const auto target = selection;
@@ -3486,7 +3688,7 @@ bool PianoRollComponent::handleKey (const juce::KeyPress& key)
         return true;
     }
 
-    if (code == juce::KeyPress::deleteKey && ! (cmd && shift)) // (Ctrl+Shift+Del: pattern.delete)
+    if (code == juce::KeyPress::deleteKey && ! cmd) // (Ctrl+Shift+Del: pattern.delete; Ctrl+Del: pianoRoll.deleteSpace)
     {
         deleteSelection();
         return true;
@@ -3495,6 +3697,7 @@ bool PianoRollComponent::handleKey (const juce::KeyPress& key)
     if (code == juce::KeyPress::escapeKey)
     {
         setSelection ({});
+        setTimeSelection (-1, -1);
         return true;
     }
 
@@ -3538,7 +3741,7 @@ bool PianoRollComponent::handleKey (const juce::KeyPress& key)
         return true;
     }
 
-    if (cmd && letter == 'V')
+    if (cmd && ! shift && letter == 'V') // (Ctrl+Shift+V: pianoRoll.pasteMidiClipboard)
     {
         paste();
         return true;
@@ -3594,6 +3797,7 @@ bool PianoRollComponent::handleKey (const juce::KeyPress& key)
     if (cmd && ! alt && ! shift && letter == 'D')
     {
         setSelection ({});
+        setTimeSelection (-1, -1);
         return true;
     }
 
@@ -3651,66 +3855,34 @@ void PianoRollComponent::refreshToolKeys (const std::function<juce::String (cons
 juce::PopupMenu PianoRollComponent::midiMenu()
 {
     juce::PopupMenu menu;
-    menu.addItem (tr ("Import .mid into this channel..."), [this] {
-        chooser = std::make_unique<juce::FileChooser> (tr ("Import MIDI"), juce::File(), "*.mid;*.midi");
-        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc) {
-            if (! fc.getResult().existsAsFile())
-                return;
-
-            juce::String error;
-            const auto file = fc.getResult();
-            const auto midi = MidiFileIo::parseFile (file, error);
-
-            if (! midi)
-            {
-                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "MIDI", error);
-                return;
-            }
-
-            // FL's "Import MIDI data" window with Blend (REA round 146b): which tracks / channels / controller
-            static midiimport::Options remembered;
-            juce::Component::SafePointer<PianoRollComponent> safe (this);
-            showMidiImportDialog (file.getFileName(), *midi, remembered, true, [safe, midi = *midi] (const midiimport::Options& o) {
-                remembered = o;
-                if (safe == nullptr)
-                    return;
-                std::vector<int> added;
-                std::string err;
-                const auto channel = safe->engine.getSelectedChannel();
-                safe->engine.editSong ([&] (Song& s) { added = midiimport::importIntoChannel (s, channel, midi, o, err); });
-                if (added.empty())
-                {
-                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "MIDI", juce::String::fromUTF8 (err.c_str()));
-                    return;
-                }
-                safe->knownNoteCount = currentPattern (safe->engine.getSong()).notes.size();
-                safe->setSelection (added);
-                safe->scrollToNotes();
-                safe->repaint();
-            });
-        });
-    });
-    menu.addItem (tr ("Export pattern as .mid..."), [this] {
-        const auto& song = engine.getSong();
-        const auto name = juce::String::fromUTF8 (song.patterns[(std::size_t) song.currentPattern].name.c_str());
-        chooser = std::make_unique<juce::FileChooser> (tr ("Export MIDI"), juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile (name + ".mid"),
-                                                       "*.mid");
-        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [this] (const juce::FileChooser& fc) {
-            auto file = fc.getResult();
-
-            if (file == juce::File())
-                return;
-
-            if (! file.hasFileExtension ("mid;midi"))
-                file = file.withFileExtension (".mid");
-
-            juce::String error;
-
-            if (! MidiFileIo::savePattern (engine.getSong(), engine.getSong().currentPattern, file, error))
-                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "MIDI", error);
-        });
-    });
+    menu.addItem (tr ("Import .mid into this channel...") + keyText ("pianoRoll.importMidi"), [this] { runAction ("pianoRoll.importMidi"); });
+    menu.addItem (tr ("Export pattern as .mid...") + keyText ("pianoRoll.exportMidi"), [this] { runAction ("pianoRoll.exportMidi"); });
     return menu;
+}
+
+void PianoRollComponent::importMidi (const midiimport::ParsedMidi& midi, const juce::String& name)
+{
+    // FL's "Import MIDI data" window with Blend (REA round 146b): which tracks / channels / controller
+    static midiimport::Options remembered;
+    juce::Component::SafePointer<PianoRollComponent> safe (this);
+    showMidiImportDialog (name, midi, remembered, true, [safe, midi] (const midiimport::Options& o) {
+        remembered = o;
+        if (safe == nullptr)
+            return;
+        std::vector<int> added;
+        std::string err;
+        const auto channel = safe->engine.getSelectedChannel();
+        safe->engine.editSong ([&] (Song& s) { added = midiimport::importIntoChannel (s, channel, midi, o, err); });
+        if (added.empty())
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "MIDI", juce::String::fromUTF8 (err.c_str()));
+            return;
+        }
+        safe->knownNoteCount = currentPattern (safe->engine.getSong()).notes.size();
+        safe->setSelection (added);
+        safe->scrollToNotes();
+        safe->repaint();
+    });
 }
 
 // --- other -------------------------------------------------------------------
@@ -3740,6 +3912,8 @@ void PianoRollComponent::changeListenerCallback (juce::ChangeBroadcaster*)
                 allChannels = false; // another channel picked (Channel Rack, keys): back to it alone
         }
 
+        if (song.currentPattern != knownPattern)
+            timeFrom = timeTo = -1; // (the time selection belongs to the pattern it was made in)
         knownPattern = song.currentPattern;
         knownChannel = engine.getSelectedChannel();
         knownNoteCount = count;
@@ -3896,5 +4070,380 @@ void PianoRollComponent::timerCallback()
         else
             dirty (tick);
     }
+}
+// --- round 168g: FL's Piano roll File / Edit / View items ----------------------------------------------------------------
+
+void PianoRollComponent::setTimeSelection (std::int64_t from, std::int64_t to)
+{
+    if (from < 0 || to <= from)
+        from = to = -1;
+    if (from == timeFrom && to == timeTo)
+        return;
+    timeFrom = from;
+    timeTo = to;
+    repaint();
+}
+
+void PianoRollComponent::spaceOperation (int kind)
+{
+    // FL needs a time selection for these (FUN_00eb35f0: nothing without one)
+    if (timeFrom < 0 || timeTo <= timeFrom)
+    {
+        ui::postHint ({ tr ("Select a time range on the ruler first (Ctrl+drag)") }, 2000);
+        return;
+    }
+    std::vector<int> channel;
+    const auto& notes = currentPattern (engine.getSong()).notes;
+    for (int i = 0; i < (int) notes.size(); ++i)
+        if (edits (notes[(std::size_t) i]))
+            channel.push_back (i);
+
+    const auto from = timeFrom, to = timeTo;
+    const auto& song = engine.getSong();
+    const auto end = currentPattern (song).effectiveLength (song.beatsPerBar);
+    const auto who = allChannels ? -1 : engine.getSelectedChannel();
+    std::vector<int> moved;
+    setSelection ({});
+    editNotes ([&] (Pattern& p) {
+        if (kind == 0 || kind == 1)
+            moved = noteedit::insertSpace (p, channel, from, to, kind == 1);
+        else if (kind == 2)
+            moved = noteedit::deleteSpace (p, channel, from, to);
+        else
+            noteedit::trimToSelection (p, who, from, to, end);
+        noteedit::sortTracking (p, moved);
+    });
+    if (kind == 3)
+        setTimeSelection (-1, -1); // (FL clears the time selection after a trim)
+    knownNoteCount = currentPattern (engine.getSong()).notes.size();
+    setSelection (moved); // FL selects the notes that moved (FUN_00e3b1a0)
+}
+
+void PianoRollComponent::insertControllerValue()
+{
+    // FL's Ctrl+I (EEInitAction → FUN_00eb38d0): the event lane's control, its current value, at the start of the
+    // time selection (or at the pattern's start)
+    const auto target = eventLaneTarget();
+    if (! target)
+    {
+        ui::postHint ({ tr ("Show a control's events in the bottom lane first (its box on the left)") }, 2000);
+        return;
+    }
+    const auto value = engine.getSong().targetValue (*target);
+    const auto at = timeFrom >= 0 ? timeFrom : (std::int64_t) 0;
+    engine.editSong ([&] (Song& s) { eventedit::setEvent (eventedit::laneFor (currentPattern (s), *target), at, value); });
+    repaint (velocityArea());
+}
+
+void PianoRollComponent::deleteAllNotes()
+{
+    // FL's Edit › Delete all (FUN_00e3d230): every note of the edited channel in the pattern, one undo step
+    std::vector<int> doomed;
+    const auto& notes = currentPattern (engine.getSong()).notes;
+    for (int i = 0; i < (int) notes.size(); ++i)
+        if (edits (notes[(std::size_t) i]))
+            doomed.push_back (i);
+    if (doomed.empty())
+        return;
+    setSelection ({});
+    editNotes ([&doomed] (Pattern& p) { noteedit::remove (p, doomed); });
+}
+
+bool PianoRollComponent::openScore (const juce::File& file)
+{
+    juce::MemoryBlock bytes;
+    if (! file.loadFileAsData (bytes))
+        return false;
+    const auto score = prtools::parseScore (std::span<const std::uint8_t> (static_cast<const std::uint8_t*> (bytes.getData()), bytes.getSize()));
+    if (! score)
+        return false;
+    const auto channel = engine.getSelectedChannel();
+    if (channel < 0 || channel >= (int) engine.getSong().channels.size())
+        return false;
+    // FL's score loading (FUN_00ff85c0): the channel's notes in the pattern are replaced by the score's
+    const auto loaded = prtools::notesFromScore (*score, channel);
+    std::vector<int> added;
+    setSelection ({});
+    editNotes ([&] (Pattern& p) {
+        std::vector<int> old;
+        for (int i = 0; i < (int) p.notes.size(); ++i)
+            if (p.notes[(std::size_t) i].channel == channel)
+                old.push_back (i);
+        noteedit::remove (p, old);
+        added = noteedit::paste (p, loaded, 0, channel);
+        noteedit::sortTracking (p, added);
+    });
+    knownNoteCount = currentPattern (engine.getSong()).notes.size();
+    repaint();
+    return true;
+}
+
+bool PianoRollComponent::saveScore (const juce::File& file) const
+{
+    // FL (FUN_0121b1b0): every note of the edited channel; "*.mid" in the same window saves a MIDI file
+    const auto& notes = currentPattern (engine.getSong()).notes;
+    std::vector<Note> mine;
+    for (const auto& n : notes)
+        if (n.channel == engine.getSelectedChannel())
+            mine.push_back (n);
+    if (mine.empty())
+        return false;
+    if (file.hasFileExtension ("mid;midi"))
+    {
+        const auto& song = engine.getSong();
+        const auto c = engine.getSelectedChannel();
+        const auto smf = MidiFileIo::writeNotes (song, mine, c >= 0 && c < (int) song.channels.size() ? song.channels[(std::size_t) c].name : std::string());
+        return file.replaceWithData (smf.getData(), smf.getSize());
+    }
+    const auto bytes = prtools::writeScore (mine);
+    return file.replaceWithData (bytes.data(), bytes.size());
+}
+
+bool PianoRollComponent::copyToMidiClipboard() const
+{
+    const auto& song = engine.getSong();
+    const auto c = engine.getSelectedChannel();
+    std::vector<Note> mine;
+    for (const auto& n : currentPattern (song).notes)
+        if (n.channel == c)
+            mine.push_back (n);
+    if (mine.empty())
+        return false;
+    const auto smf = MidiFileIo::writeNotes (song, mine, c >= 0 && c < (int) song.channels.size() ? song.channels[(std::size_t) c].name : std::string());
+    const auto ok = midiclipboard::put (smf);
+    ui::postHint ({ ok ? tr ("Copied {0} notes to the MIDI clipboard", { juce::String ((int) mine.size()) }) : tr ("The clipboard is busy: try again") }, 2000);
+    return ok;
+}
+
+void PianoRollComponent::pasteFromMidiClipboard()
+{
+    const auto smf = midiclipboard::get();
+    if (! smf)
+    {
+        ui::postHint ({ tr ("There is no MIDI data in the clipboard") }, 2000);
+        return;
+    }
+    juce::String error;
+    const auto midi = MidiFileIo::parseBytes (smf->getData(), smf->getSize(), error);
+    if (! midi)
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "MIDI", tr ("Error parsing the MIDI data..."));
+        return;
+    }
+    importMidi (*midi, tr ("MIDI from clipboard")); // (FL: the same "Import MIDI data" window, FUN_00e1d090)
+}
+
+bool PianoRollComponent::loadFile (const juce::File& file)
+{
+    if (isScoreFile (file))
+        return openScore (file);
+    if (isMidiFile (file))
+    {
+        juce::String error;
+        const auto midi = MidiFileIo::parseFile (file, error);
+        if (! midi)
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "MIDI", error);
+            return true;
+        }
+        importMidi (*midi, file.getFileName());
+        return true;
+    }
+    if (BrowserComponent::isAudioFile (file))
+    {
+        loadBackgroundWave (file);
+        return true;
+    }
+    return false;
+}
+
+bool PianoRollComponent::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (const auto& f : files)
+        if (const juce::File file (f); isScoreFile (file) || isMidiFile (file) || BrowserComponent::isAudioFile (file))
+            return true;
+    return false;
+}
+
+void PianoRollComponent::filesDropped (const juce::StringArray& files, int, int)
+{
+    for (const auto& f : files)
+        if (loadFile (juce::File (f)))
+            return;
+}
+
+bool PianoRollComponent::isInterestedInDragSource (const juce::DragAndDropTarget::SourceDetails& details)
+{
+    if (! BrowserComponent::isBrowserDrag (details))
+        return false;
+    const auto file = BrowserComponent::draggedFile (details);
+    return isScoreFile (file) || isMidiFile (file) || BrowserComponent::isAudioFile (file);
+}
+
+void PianoRollComponent::itemDropped (const juce::DragAndDropTarget::SourceDetails& details)
+{
+    loadFile (BrowserComponent::draggedFile (details));
+}
+
+bool PianoRollComponent::isBackgroundWaveShown() noexcept
+{
+    return backgroundWaveOn() && backgroundWave() != nullptr;
+}
+
+void PianoRollComponent::setBackgroundWaveShown (bool on)
+{
+    backgroundWaveOn() = on;
+    if (on && backgroundWave() == nullptr)
+        ui::postHint ({ tr ("Drop an audio file on the Piano roll to see it as the background waveform") }, 2500);
+    repaint();
+}
+
+void PianoRollComponent::loadBackgroundWave (const juce::File& file)
+{
+    // peaks (min / max per 256 samples, every channel) read off the message thread
+    juce::Component::SafePointer<PianoRollComponent> safe (this);
+    juce::Thread::launch ([file, safe] {
+        auto wave = std::make_shared<BackgroundWave>();
+        wave->file = file;
+        juce::AudioFormatManager formats;
+        registerAudioFormats (formats);
+        if (std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file)); reader != nullptr && reader->lengthInSamples > 0)
+        {
+            wave->sampleRate = reader->sampleRate > 0 ? reader->sampleRate : 44100.0;
+            wave->samples = juce::jmin<std::int64_t> (reader->lengthInSamples, (std::int64_t) (wave->sampleRate * 60.0 * 30.0)); // (30 min at most)
+            const auto channels = (int) juce::jlimit (1u, 8u, reader->numChannels);
+            constexpr int chunk = BackgroundWave::perPeak * 256;
+            juce::AudioBuffer<float> buffer (channels, chunk);
+            for (std::int64_t pos = 0; pos < wave->samples; pos += chunk)
+            {
+                const auto n = (int) juce::jmin<std::int64_t> (chunk, wave->samples - pos);
+                buffer.clear();
+                reader->read (&buffer, 0, n, pos, true, channels > 1);
+                for (int b = 0; b < n; b += BackgroundWave::perPeak)
+                {
+                    auto lo = 0.0f, hi = 0.0f;
+                    const auto m = juce::jmin (BackgroundWave::perPeak, n - b);
+                    for (int c = 0; c < channels; ++c)
+                    {
+                        const auto range = juce::FloatVectorOperations::findMinAndMax (buffer.getReadPointer (c, b), m);
+                        lo = juce::jmin (lo, range.getStart());
+                        hi = juce::jmax (hi, range.getEnd());
+                    }
+                    wave->lo.push_back (lo);
+                    wave->hi.push_back (hi);
+                }
+            }
+        }
+        juce::MessageManager::callAsync ([safe, wave] {
+            if (wave->lo.empty())
+            {
+                ui::postHint ({ tr ("This audio file could not be read") }, 2000);
+                return;
+            }
+            backgroundWave() = wave;
+            backgroundWaveOn() = true; // FL: loading one turns the view on (FUN_00ead950 (1))
+            if (safe != nullptr)
+                safe->repaint();
+        });
+    });
+}
+
+void PianoRollComponent::paintBackgroundWave (juce::Graphics& g, juce::Rectangle<int> grid)
+{
+    const auto wave = backgroundWave();
+    if (! backgroundWaveOn() || wave == nullptr || wave->lo.empty())
+        return;
+    // FL (FUN_00e45a00): from the pattern's start, as long as the audio lasts at the song tempo, across the whole grid
+    // height (centred, 90% of the half height)
+    const auto& song = engine.getSong();
+    const auto ticksPerSecond = juce::jmax (1.0, song.bpm) / 60.0 * ppq;
+    const auto ticksPerPeak = BackgroundWave::perPeak / wave->sampleRate * ticksPerSecond;
+    const auto centre = (float) grid.getCentreY();
+    const auto amplitude = (float) grid.getHeight() * 0.5f * 0.9f;
+    const auto x0 = juce::jmax (grid.getX(), (int) std::floor (tickToX (0.0)));
+    const auto x1 = juce::jmin (grid.getRight(), (int) std::ceil (tickToX ((double) wave->lo.size() * ticksPerPeak)));
+    if (x1 <= x0)
+        return;
+    juce::RectangleList<float> bars;
+    for (int x = x0; x < x1; ++x)
+    {
+        const auto p0 = (std::int64_t) std::floor (xToTick (x) / ticksPerPeak);
+        const auto p1 = juce::jmax (p0 + 1, (std::int64_t) std::floor (xToTick (x + 1) / ticksPerPeak));
+        auto lo = 0.0f, hi = 0.0f;
+        for (auto p = juce::jmax<std::int64_t> (0, p0); p < juce::jmin<std::int64_t> ((std::int64_t) wave->lo.size(), p1); ++p)
+        {
+            lo = juce::jmin (lo, wave->lo[(std::size_t) p]);
+            hi = juce::jmax (hi, wave->hi[(std::size_t) p]);
+        }
+        const auto top = centre - juce::jlimit (0.0f, 1.0f, hi) * amplitude, bottom = centre - juce::jlimit (-1.0f, 0.0f, lo) * amplitude;
+        bars.addWithoutMerging ({ (float) x, top, 1.0f, juce::jmax (1.0f, bottom - top) });
+    }
+    g.setColour (theme::colour::textPrimary.withAlpha (0.16f));
+    g.fillRectList (bars);
+}
+
+juce::PopupMenu PianoRollComponent::fileMenu()
+{
+    // FL's EEFileMenu (DFM): Open score, Browse scores, Save score as | Import / Export MIDI, Paste from / Copy to MIDI
+    // clipboard
+    juce::PopupMenu menu;
+    menu.addItem (tr ("Open score...") + keyText ("pianoRoll.openScore"), [this] { runAction ("pianoRoll.openScore"); });
+    menu.addItem (tr ("Browse scores") + keyText ("pianoRoll.browseScores"), onBrowseScores != nullptr, false, [this] { runAction ("pianoRoll.browseScores"); });
+    menu.addItem (tr ("Save score as...") + keyText ("pianoRoll.saveScore"), [this] { runAction ("pianoRoll.saveScore"); });
+    menu.addSeparator();
+    menu.addItem (tr ("Import MIDI file...") + keyText ("pianoRoll.importMidi"), [this] { runAction ("pianoRoll.importMidi"); });
+    menu.addItem (tr ("Export as MIDI file...") + keyText ("pianoRoll.exportMidi"), [this] { runAction ("pianoRoll.exportMidi"); });
+    menu.addItem (tr ("Paste from MIDI clipboard...") + keyText ("pianoRoll.pasteMidiClipboard"), midiclipboard::hasMidi(), false,
+                  [this] { runAction ("pianoRoll.pasteMidiClipboard"); });
+    menu.addItem (tr ("Copy to MIDI clipboard") + keyText ("pianoRoll.copyMidiClipboard"), [this] { runAction ("pianoRoll.copyMidiClipboard"); });
+    return menu;
+}
+
+juce::PopupMenu PianoRollComponent::editMenu()
+{
+    // FL's EEEditMenu, the items that apply to notes (DFM; Shift / Transpose = the arrow keys, round 167j)
+    const auto hasTime = timeFrom >= 0 && timeTo > timeFrom;
+    const auto grid = gridTicks();
+    juce::PopupMenu menu;
+    menu.addItem (tr ("Cut") + "\tCtrl+X", ! selection.empty(), false, [this] { copySelection(); deleteSelection(); });
+    menu.addItem (tr ("Copy") + "\tCtrl+C", [this] { copySelection(); });
+    menu.addItem (tr ("Paste") + "\tCtrl+V", ! clipboard.empty(), false, [this] { paste(); });
+    menu.addItem (tr ("Duplicate") + "\tCtrl+B", [this] { duplicateSelection(); });
+    menu.addItem (tr ("Delete") + "\tDel", ! selection.empty(), false, [this] { deleteSelection(); });
+    menu.addItem (tr ("Delete all") + keyText ("pianoRoll.deleteAll"), [this] { runAction ("pianoRoll.deleteAll"); });
+    menu.addSeparator();
+    menu.addItem (tr ("Shift left") + "\tShift+Left", ! selection.empty(), false, [this, grid] { nudge (-grid, 0); });
+    menu.addItem (tr ("Shift right") + "\tShift+Right", ! selection.empty(), false, [this, grid] { nudge (grid, 0); });
+    menu.addItem (tr ("Transpose up") + "\tShift+Up", ! selection.empty(), false, [this] { nudge (0, 1); });
+    menu.addItem (tr ("Transpose down") + "\tShift+Down", ! selection.empty(), false, [this] { nudge (0, -1); });
+    menu.addItem (tr ("Transpose one octave up") + "\tCtrl+Up", ! selection.empty(), false, [this] { nudge (0, 12); });
+    menu.addItem (tr ("Transpose one octave down") + "\tCtrl+Down", ! selection.empty(), false, [this] { nudge (0, -12); });
+    menu.addSeparator();
+    menu.addItem (tr ("Insert space") + keyText ("pianoRoll.insertSpace"), hasTime, false, [this] { runAction ("pianoRoll.insertSpace"); });
+    menu.addItem (tr ("Slice & insert space") + keyText ("pianoRoll.sliceInsertSpace"), hasTime, false, [this] { runAction ("pianoRoll.sliceInsertSpace"); });
+    menu.addItem (tr ("Delete space") + keyText ("pianoRoll.deleteSpace"), hasTime, false, [this] { runAction ("pianoRoll.deleteSpace"); });
+    menu.addItem (tr ("Trim") + keyText ("pianoRoll.trimSpace"), hasTime, false, [this] { runAction ("pianoRoll.trimSpace"); });
+    menu.addSeparator();
+    menu.addItem (tr ("Insert current controller value") + keyText ("pianoRoll.insertControllerValue"), eventLaneTarget().has_value(), false,
+                  [this] { runAction ("pianoRoll.insertControllerValue"); });
+    return menu;
+}
+
+juce::PopupMenu PianoRollComponent::viewMenu()
+{
+    // FL's EEViewMenu, its "Helpers" items (DFM)
+    juce::PopupMenu menu;
+    menu.addItem (tr ("Note grid highlights") + keyText ("pianoRoll.gridHighlights"), true, gridHighlights, [this] { runAction ("pianoRoll.gridHighlights"); });
+    menu.addItem (tr ("Show chord name for selection") + keyText ("pianoRoll.showChordName"), true, showChordName,
+                  [this] { runAction ("pianoRoll.showChordName"); });
+    menu.addItem (tr ("Background waveform") + keyText ("pianoRoll.backgroundWave"), true, isBackgroundWaveShown(),
+                  [this] { runAction ("pianoRoll.backgroundWave"); });
+    if (const auto wave = backgroundWave())
+        menu.addItem (tr ("Remove the background waveform ({0})", { wave->file.getFileName() }), [this] {
+            backgroundWave().reset();
+            backgroundWaveOn() = false;
+            repaint();
+        });
+    return menu;
 }
 } // namespace lynx

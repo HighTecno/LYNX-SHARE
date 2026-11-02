@@ -800,4 +800,133 @@ void colourGroup (Song& song, int track)
     for (auto t : groupMembers (song, header))
         song.playlistTracks[(std::size_t) t].colour = colour;
 }
+
+// --- round 168g: FL's editor Select / Edit items ------------------------------------------------------------------------
+std::vector<int> selectRandomMore (const Pattern& pattern, const std::vector<int>& channelNotes, std::vector<int> selection, bool more,
+                                   std::uint32_t seed)
+{
+    std::set<int> chosen (selection.begin(), selection.end());
+    std::vector<int> valid;
+    for (auto i : channelNotes)
+        if (i >= 0 && i < (int) pattern.notes.size())
+            valid.push_back (i);
+    std::sort (valid.begin(), valid.end());
+    valid.erase (std::unique (valid.begin(), valid.end()), valid.end());
+
+    // FUN_00eb2510: the count is the channel's note count / 2 for "more" (one round otherwise); each round picks a
+    // random note among the not yet selected ones (none left: the round does nothing)
+    const auto rounds = more ? (int) valid.size() / 2 : 1;
+    std::uint64_t state = seed == 0 ? 0x9E3779B97F4A7C15ull : seed;
+    for (int r = 0; r < rounds; ++r)
+    {
+        std::vector<int> free;
+        for (auto i : valid)
+            if (chosen.count (i) == 0)
+                free.push_back (i);
+        if (free.empty())
+            break;
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        chosen.insert (free[(std::size_t) ((state >> 33) % free.size())]);
+    }
+    return { chosen.begin(), chosen.end() };
+}
+
+std::vector<int> selectOddSteps (const Pattern& pattern, const std::vector<int>& channelNotes, std::vector<int> selection, std::int64_t step)
+{
+    std::set<int> chosen (selection.begin(), selection.end());
+    step = std::max<std::int64_t> (1, step);
+    for (auto i : channelNotes)
+        if (i >= 0 && i < (int) pattern.notes.size())
+        {
+            // FUN_00eb2b70: ((start + step / 2) / step) is odd (the start rounded to the nearest step)
+            const auto s = pattern.notes[(std::size_t) i].start + step / 2;
+            const auto q = s >= 0 ? s / step : -((-s + step - 1) / step);
+            if ((q & 1) != 0)
+                chosen.insert (i);
+        }
+    return { chosen.begin(), chosen.end() };
+}
+
+namespace
+{
+// cuts the given notes at `tick` (strictly inside); the tails are appended and added to `indices`
+void sliceAt (Pattern& pattern, std::vector<int>& indices, std::int64_t tick)
+{
+    const auto count = indices.size();
+    for (std::size_t k = 0; k < count; ++k)
+        if (const auto tail = split (pattern, indices[k], tick); tail >= 0)
+            indices.push_back (tail);
+}
+} // namespace
+
+std::vector<int> insertSpace (Pattern& pattern, const std::vector<int>& channelNotes, std::int64_t from, std::int64_t to, bool slice)
+{
+    std::vector<int> moved;
+    if (to <= from)
+        return moved;
+    auto indices = channelNotes;
+    indices.erase (std::remove_if (indices.begin(), indices.end(), [&pattern] (int i) { return i < 0 || i >= (int) pattern.notes.size(); }),
+                   indices.end());
+    if (slice)
+        sliceAt (pattern, indices, from);
+    for (auto i : indices)
+        if (auto& n = pattern.notes[(std::size_t) i]; n.start >= from)
+        {
+            n.start += to - from;
+            moved.push_back (i);
+        }
+    std::sort (moved.begin(), moved.end());
+    return moved;
+}
+
+std::vector<int> deleteSpace (Pattern& pattern, const std::vector<int>& channelNotes, std::int64_t from, std::int64_t to)
+{
+    std::vector<int> moved;
+    if (to <= from)
+        return moved;
+    auto indices = channelNotes;
+    indices.erase (std::remove_if (indices.begin(), indices.end(), [&pattern] (int i) { return i < 0 || i >= (int) pattern.notes.size(); }),
+                   indices.end());
+    sliceAt (pattern, indices, from);
+    sliceAt (pattern, indices, to);
+
+    std::vector<int> removed;
+    for (auto i : indices)
+    {
+        auto& n = pattern.notes[(std::size_t) i];
+        if (n.start >= from && n.start < to)
+            removed.push_back (i);
+        else if (n.start >= to)
+        {
+            n.start -= to - from;
+            moved.push_back (i);
+        }
+    }
+
+    // the moved indices after the removal
+    std::sort (removed.begin(), removed.end());
+    std::vector<int> shifted;
+    for (auto i : moved)
+        shifted.push_back (i - (int) (std::lower_bound (removed.begin(), removed.end(), i) - removed.begin()));
+    remove (pattern, removed);
+    std::sort (shifted.begin(), shifted.end());
+    return shifted;
+}
+
+void trimToSelection (Pattern& pattern, int channel, std::int64_t from, std::int64_t to, std::int64_t end)
+{
+    auto notesOf = [&pattern, channel] {
+        std::vector<int> out;
+        for (int i = 0; i < (int) pattern.notes.size(); ++i)
+            if (channel < 0 || pattern.notes[(std::size_t) i].channel == channel)
+                out.push_back (i);
+        return out;
+    };
+    // (FUN_00eb35f0: delete space [to, end], then [0, from])
+    auto last = end;
+    for (auto i : notesOf())
+        last = std::max (last, pattern.notes[(std::size_t) i].start + 1);
+    deleteSpace (pattern, notesOf(), to, last);
+    deleteSpace (pattern, notesOf(), 0, from);
+}
 } // namespace lynx::noteedit
