@@ -15,6 +15,7 @@
 #include "core/UpdateCheck.h"
 #include "platform/Paths.h"
 #include "ui/I18n.h"
+#include "ui/Toolbar.h" // XTEMP
 
 namespace lynx
 {
@@ -126,7 +127,11 @@ public:
                && check (api->CreateSessionOptions (&options), error)
                // the project may be playing: cores stay free for the audio callback and the UI, and idle workers
                // sleep instead of spinning (ONNX Runtime's default keeps every worker busy between operators)
-               && check (api->SetIntraOpNumThreads (options, stemsplit::separationThreads (juce::SystemStats::getNumPhysicalCpus(), juce::SystemStats::getNumCpus())), error)
+               && check (api->SetIntraOpNumThreads (options, juce::SystemStats::getEnvironmentVariable ("LYNX_X_THREADS", {}).getIntValue() > 0 ? juce::SystemStats::getEnvironmentVariable ("LYNX_X_THREADS", {}).getIntValue() : stemsplit::separationThreads (juce::SystemStats::getNumPhysicalCpus(), juce::SystemStats::getNumCpus())), error)
+               && (juce::SystemStats::getEnvironmentVariable ("LYNX_X_ARENA", "1") == "1" || check (api->DisableCpuMemArena (options), error))
+               && (juce::SystemStats::getEnvironmentVariable ("LYNX_X_PATTERN", "1") == "1" || check (api->DisableMemPattern (options), error))
+               && (juce::SystemStats::getEnvironmentVariable ("LYNX_X_OPT", {}).isEmpty() || check (api->SetSessionGraphOptimizationLevel (options, (GraphOptimizationLevel) juce::SystemStats::getEnvironmentVariable ("LYNX_X_OPT", {}).getIntValue()), error))
+               && (juce::SystemStats::getEnvironmentVariable ("LYNX_X_PREPACK", "1") == "1" || check (api->AddSessionConfigEntry (options, "session.disable_prepacking", "1"), error))
                && check (api->SetInterOpNumThreads (options, 1), error)
                && check (api->AddSessionConfigEntry (options, "session.intra_op.allow_spinning", "0"), error)
                && check (api->AddSessionConfigEntry (options, "session.inter_op.allow_spinning", "0"), error);
@@ -619,10 +624,14 @@ juce::String extractStemsToFolder (AudioEngine& engine, const juce::File& input,
         return "no model at " + modelFile().getFullPathName();
     juce::String error;
     StemModel model;
+    const auto xlog = [&] (const juce::String& what) { folder.getSiblingFile ("xmem.log").appendText (what + " ws=" + juce::String (toolbar::PerformanceMeter::processMemoryBytes() / 1048576) + "MB t=" + juce::String (juce::Time::getMillisecondCounterHiRes() / 1000.0, 1) + "\n"); }; // XTEMP
+    xlog ("before open"); // XTEMP
     if (! model.open (modelFile(), error))
         return error;
+    xlog ("after open"); // XTEMP
     std::array<juce::File, stemsplit::numStems> files;
-    separateToFiles (model, *sample, input.getFileNameWithoutExtension(), folder, [] { return false; }, {}, files, error);
+    separateToFiles (model, *sample, input.getFileNameWithoutExtension(), folder, [] { return false; }, [&] (double p) { xlog ("seg " + juce::String (p, 3)); }, files, error);
+    xlog ("done"); // XTEMP
     return error;
 }
 } // namespace lynx
