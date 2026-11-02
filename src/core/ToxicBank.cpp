@@ -127,7 +127,6 @@ float vocal (int h) // two formant humps (about "ah" on C3)
     const auto f = (float) h;
     return (std::exp (-std::pow ((f - 5.5f) / 2.2f, 2.0f)) + 0.6f * std::exp (-std::pow ((f - 9.5f) / 2.5f, 2.0f)) + 0.25f / f) / std::sqrt (f);
 }
-float bell (int h) { return h == 1 ? 1.0f : h == 3 ? 0.4f : h == 5 ? 0.25f : h == 9 ? 0.15f : 0.0f; }
 
 using Recipe = void (*) (Tox&);
 
